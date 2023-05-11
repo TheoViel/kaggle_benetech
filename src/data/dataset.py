@@ -1,55 +1,87 @@
-import re
+import copy
 import torch
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
-from data.transforms import augment, normalize, interpolate, flip, add_missing_hand, normalize_face
-from params import TYPE_MAPPING
+from data.transforms import augment, flip, add_missing_hand
 
 
 def crop_or_pad(data, max_len=100, mode="start"):
-    diff = max_len - data['x'].shape[0]
+    """
+    Crop or pad the data to a maximum length.
+    Mode options are "start" or "center"
+
+    Args:
+        data (dict): A dictionary containing the data.
+        max_len (int, optional): The maximum length of the data. Defaults to 100.
+        mode (str, optional): The mode for cropping/padding. Defaults to "start".
+
+    Returns:
+        dict: The cropped or padded data.
+    """
+    diff = max_len - data["x"].shape[0]
 
     if diff <= 0:  # Crop
         if mode == "start":
-            return {k : data[k][:max_len] for k in data.keys()}
+            return {k: data[k][:max_len] for k in data.keys()}
         else:
             offset = np.abs(diff) // 2
-            return {k : data[k][offset: offset + max_len] for k in data.keys()}
+            return {k: data[k][offset: offset + max_len] for k in data.keys()}
 
-    padding = torch.ones((diff, data['x'].shape[1]))
-    
+    padding = torch.ones((diff, data["x"].shape[1]))
+
     padded = {}
     for k in data.keys():
         if k in ["target", "length"]:
             padded[k] = data[k]
         else:
             coef = 0  # -10 if k in ['x', 'y', 'z'] else 0
-            padded[k] = torch.cat([data[k], coef * padding], axis=0).type(data[k].type())
+            padded[k] = torch.cat([data[k], coef * padding], axis=0).type(
+                data[k].type()
+            )
 
     return padded
 
 
 def resize(data, size=50):
+    """
+    Resize the data to a specified size.
+
+    Args:
+        data (dict): A dictionary containing the data.
+        size (int, optional): The desired size of the data. Defaults to 50.
+
+    Returns:
+        dict: The resized data.
+    """
     for k in ["x", "y", "z"]:
         data[k] = torch.nn.functional.interpolate(
             data[k].T.unsqueeze(0), size, mode="linear"
         )[0].T
-        
+
     if "type" in data.keys():
-        data['type'] = data['type'][:1].repeat(size, 1)
-    
+        data["type"] = data["type"][:1].repeat(size, 1)
+
     return data
 
 
 def is_left(data):
-    fts = torch.abs(data['x'])
-    embed = data['type'][0]
+    """
+    Check if the signer is left handed.
+
+    Args:
+        data (dict): A dictionary containing the data.
+
+    Returns:
+        bool: True if the signer is left handed, False otherwise.
+    """
+    fts = torch.abs(data["x"])
+    embed = data["type"][0]
 
     left_hand = fts.T[embed == 1].T
     right_hand = fts.T[embed == 2].T
-    
+
     missing_left = (left_hand.sum(-1) == 0).sum()
     missing_right = (right_hand.sum(-1) == 0).sum()
 
@@ -58,9 +90,26 @@ def is_left(data):
 
 class SignDataset(Dataset):
     """
-    Sign torch Dataset.
-    """
+    Custom dataset class for the problem.
 
+    Attributes:
+        df (pandas.DataFrame): DataFrame containing the dataset.
+        max_len (int, optional): Maximum length of the data sequence.
+        aug_strength (int, optional): Augmentation strength.
+        resize_mode (str, optional): Resize mode for the data.
+        train (bool, optional): Flag indicating if the dataset is for training.
+        dist (bool, optional): Flag indicating if the dataset uses distrillation.
+        paths (numpy.ndarray): Array of processed file paths.
+        targets (numpy.ndarray): Array of target labels.
+        buffer (dict): Buffer to store preloaded data batches.
+        buffer_mode (bool): Flag indicating if the buffer is in use.
+
+    Methods:
+        __len__(self): Returns the length of the dataset.
+        fill_buffer(self, tqdm_enabled=False): Fills the buffer with data batches.
+        mix_face(self, data, idx, p=0): Mixes the face data with another sample of the same class.
+        __getitem__(self, idx): Returns the item at the specified index.
+    """
     def __init__(
         self,
         df,
@@ -68,31 +117,50 @@ class SignDataset(Dataset):
         aug_strength=0,
         resize_mode="pad",
         train=False,
+        dist=False,
     ):
         """
-        Constructor
+        Constructor.
 
         Args:
-            df (pd DataFrame): DataFrame.
-            transforms (albumentation transforms, optional): Transforms to apply. Defaults to None.
+            df (pandas.DataFrame): DataFrame containing the dataset.
+            max_len (int, optional): Maximum length of the data sequence. Defaults to None.
+            aug_strength (int, optional): Augmentation strength. Defaults to 0.
+            resize_mode (str, optional): Resize mode for the data. Defaults to "pad".
+            train (bool, optional): Whether the dataset is for training. Defaults to False.
+            dist (bool, optional): Whether the dataset uses distillation. Defaults to False.
         """
         self.df = df
         self.max_len = max_len
         self.aug_strength = aug_strength
         self.train = train
+        self.dist = dist
         self.resize_mode = resize_mode
-        
+
         self.paths = df["processed_path"].values
         self.targets = df["target"].values
-        
+
         self.buffer = {}
         self.buffer_mode = False
-        self.lens = {}
 
     def __len__(self):
+        """
+        Returns the length of the dataset.
+
+        Returns:
+            int: Length of the dataset.
+
+        """
         return len(self.paths)
-    
+
     def fill_buffer(self, tqdm_enabled=False):
+        """
+        Fills the buffer with data.
+
+        Args:
+            tqdm_enabled (bool, optional): Whether to display tqdm progress bar. Defaults to False.
+
+        """
         self.buffer_mode = True
         loader = DataLoader(
             self,
@@ -101,31 +169,43 @@ class SignDataset(Dataset):
             num_workers=8,
             pin_memory=True,
             collate_fn=list,
-            drop_last=False
+            drop_last=False,
         )
         for i, batch in enumerate(tqdm(loader, disable=not tqdm_enabled)):
             for j, b in enumerate(batch):
                 self.buffer[i * 1024 + j] = b
-        
+
         self.buffer_mode = False
-        
+
     def mix_face(self, data, idx, p=0):
+        """
+        Mixes the face data with another sample of the same class.
+
+        Args:
+            data (dict): Dictionary containing the data.
+            idx (int): Index of the sample to mix with.
+            p (float, optional): Probability of mixing the face data. Defaults to 0.
+
+        Returns:
+            dict: Mixed face data.
+        """
         if np.random.random() > p:
             return data
 
         # Load other sample
-        other_idx = np.random.choice(list(self.df[self.df['target'] == self.targets[idx]].index))
-#         print(other_idx)
-        
+        other_idx = np.random.choice(
+            list(self.df[self.df["target"] == self.targets[idx]].index)
+        )
+
         try:
             frames = self.buffer[other_idx]
         except KeyError:
             frames = np.load(self.paths[other_idx])
-            
+
         # Create other data
         landmark_embed = np.arange(frames.shape[-1])[None] + 1
         landmark_embed = np.repeat(landmark_embed, frames.shape[0], axis=0)
-        
+
         other_data = {
             "type": torch.tensor(frames[:, 0], dtype=torch.long),
             "landmark": torch.tensor(landmark_embed, dtype=torch.long),
@@ -133,47 +213,51 @@ class SignDataset(Dataset):
             "y": torch.tensor(frames[:, 2], dtype=torch.float),
             "z": torch.tensor(frames[:, 3], dtype=torch.float),
         }
-        
+
         # Flip to same direction
         if is_left(other_data) != is_left(data):
             other_data = flip(other_data)
 
         # Resize to same size
         other_data = resize(other_data, data["x"].size(0))
-        
+
         # Replace face
         ids = torch.isin(data["type"][0], torch.tensor([3, 4, 6]))
         replaced = torch.isin(data["type"], torch.tensor([3, 4, 6]))
-        
+
         for k in ["x", "y"]:
             new_face = other_data[k].T[ids].T
             if (new_face.max() - new_face.min()) == 0:
                 return data  # do not apply
-                
+
         for k in ["x", "y", "z"]:
             new_face = other_data[k].T[ids].T
             old_face = data[k].T[ids].T
-            
+
             if (k == "z") and ((new_face.max() - new_face.min()) == 0):
                 return data
-            
-            other_data[k] = (other_data[k] - new_face.min()) / (new_face.max() - new_face.min())
-            other_data[k] = other_data[k] * (old_face.max() - old_face.min()) + old_face.min()
+
+            other_data[k] = (other_data[k] - new_face.min()) / (
+                new_face.max() - new_face.min()
+            )
+            other_data[k] = (
+                other_data[k] * (old_face.max() - old_face.min()) + old_face.min()
+            )
             data[k] = torch.where(replaced, other_data[k], data[k])
-    
+
         return data
 
     def __getitem__(self, idx):
         """
-        Item accessor.
+        Returns the item at the specified index.
 
         Args:
             idx (int): Index.
 
         Returns:
-            torch tensor [C x H x W x C]: Image.
-            torch tensor [1]: Label.
-            torch tensor [1]: Aux label.
+            data (dict): A dictionary containing the augmented data.
+            data_mt (dict): A dictionary containing the augmented data for mean teacher.
+            data_dist (dict): A dictionary containing the augmented data for distillation.
         """
         try:
             frames = self.buffer[idx]
@@ -183,13 +267,10 @@ class SignDataset(Dataset):
 
         if self.buffer_mode:
             return frames
-        
-        length = len(frames)
-        self.lens[idx] = length
 
         landmark_embed = np.arange(frames.shape[-1])[None] + 1
         landmark_embed = np.repeat(landmark_embed, frames.shape[0], axis=0)
-        
+
         data = {
             "type": torch.tensor(frames[:, 0], dtype=torch.long),
             "landmark": torch.tensor(landmark_embed, dtype=torch.long),
@@ -197,32 +278,47 @@ class SignDataset(Dataset):
             "y": torch.tensor(frames[:, 2], dtype=torch.float),
             "z": torch.tensor(frames[:, 3], dtype=torch.float),
         }
-        
-        data["target"] = torch.tensor([self.targets[idx]], dtype=torch.float)
-        
-#         data = normalize_face(data)
 
+        data["target"] = torch.tensor([self.targets[idx]], dtype=torch.float)
+
+        data_mt, data_dist = 0, 0
         if self.train:
-#             if self.aug_strength >= 3:
-#                 data = self.mix_face(data, idx, p=0.25)
-#                 data = add_missing_hand(data, p=0.25)
+            data_mt = copy.deepcopy(data)
+            if self.dist:
+                data_dist = copy.deepcopy(data)
+
+            if self.aug_strength >= 3:
+                data = self.mix_face(data, idx, p=0.25)
+                data = add_missing_hand(data, p=0.25)
+                data_mt = self.mix_face(data_mt, idx, p=0.25)
+                data_mt = add_missing_hand(data_mt, p=0.25)
+                if self.dist:
+                    data_dist = self.mix_face(data_dist, idx, p=0.25)
+                    data_dist = add_missing_hand(data_dist, p=0.25)
 
             data = augment(data, aug_strength=self.aug_strength)
 
-#         data = add_missing_hand(data)
-#         data = normalize(data)
+            data_mt = augment(data_mt, aug_strength=self.aug_strength)
+            data_mt["mask"] = torch.ones(data_mt["x"].size())
+
+            if self.dist:
+                data_dist = augment(data_dist, aug_strength=self.aug_strength)
+                data_dist["mask"] = torch.ones(data_dist["x"].size())
 
         data["mask"] = torch.ones(data["x"].size())
-#         data["length"] = length
-            
-#         data = interpolate(data, p=1)
-#         if not is_left(data):
-#         data = flip(data, p=1)
 
         if self.max_len is not None:
             if self.resize_mode == "pad":
                 data = crop_or_pad(data, max_len=self.max_len)
+                if self.train:
+                    data_mt = crop_or_pad(data_mt, max_len=self.max_len)
+                    if self.dist:
+                        data_dist = crop_or_pad(data_dist, max_len=self.max_len)
             else:
                 data = resize(data, size=self.max_len)
+                if self.train:
+                    data_mt = resize(data_mt, size=self.max_len)
+                    if self.dist:
+                        data_dist = resize(data_dist, size=self.max_len)
 
-        return data
+        return data, data_mt, data_dist

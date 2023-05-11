@@ -1,16 +1,12 @@
 import torch
-import torch.nn as nn
 import numpy as np
+import torch.nn as nn
 
+from torch.nn import LayerNorm
 from transformers import AutoConfig
-from transformers.models.bert.modeling_bert import BertEncoder
 from transformers.models.deberta_v2.modeling_deberta_v2 import DebertaV2Encoder
+from transformers.models.deberta_v2.modeling_deberta_v2 import StableDropout
 
-from model_zoo.mha import TransformerBlock
-from model_zoo.gcn import DecoupledGCN
-from model_zoo.resnet import ResNet, BasicBlock, Bottleneck
-from model_zoo.heng import HCKTransfo, positional_encoding
-from model_zoo.utils import add_shift, compute_finger_face_distance, compute_hand_features
 from utils.torch import load_model_weights
 
 
@@ -30,53 +26,30 @@ def define_model(
     verbose=1,
 ):
     """
-    Builds the architecture.
-    TODO
+    Defines and initializes a specific model architecture.
 
     Args:
-        name (str): Model name
-        num_classes (int, optional): Number of classes. Defaults to 1.
-        pretrained (bool, optional): Whether to load timm pretrained weights.
-        verbose (int, optional): Whether to display infos. Defaults to 1.
+        name (str): The name of the model architecture.
+        embed_dim (int, optional): The embedding dimension. Defaults to 256.
+        dense_dim (int, optional): The dense layer dimension. Defaults to 512.
+        transfo_dim (int, optional): The transformer layer dimension. Defaults to 768.
+        transfo_heads (int, optional): Number of attention heads in the transformer. Defaults to 8.
+        transfo_layers (int, optional): The number of transformer layers. Defaults to 4.
+        drop_rate (float, optional): The dropout rate. Defaults to 0.
+        num_classes (int, optional): The number of classes for the main task. Defaults to 250.
+        num_classes_aux (int, optional): The number of classes for auxiliary tasks. Defaults to 0.
+        pretrained_weights (str, optional): Path to pre-trained weights. Defaults to "".
+        n_landmarks (int, optional): The number of landmarks. Defaults to 100.
+        max_len (int, optional): The maximum length of input sequences. Defaults to 40.
+        verbose (int, optional): Verbosity level. Defaults to 1.
 
     Returns:
-        torch Module: Model.
+        torch.nn.Module: The initialized model.
+
+    Raises:
+        NotImplementedError: If the specified model architecture is not implemented.
     """
-    if name == "sl_gcn":
-#         assert 
-        model = SLGCN(
-#             embed_dim=embed_dim,
-#             transfo_dim=transfo_dim,
-#             transfo_heads=transfo_heads,
-            num_classes=num_classes,
-#             drop_rate=drop_rate,
-        )
-    elif name == "mlp_heng":
-        model = SignMLPHeng(
-            embed_dim=embed_dim,
-            dense_dim=dense_dim,
-            transfo_dim=transfo_dim,
-            transfo_heads=transfo_heads,
-            transfo_layers=transfo_layers,
-            num_classes=num_classes,
-            num_classes_aux=num_classes_aux,
-            n_landmarks=n_landmarks,
-            drop_rate=drop_rate,
-        )
-    elif name == "mlp_bert_2":
-        model = SignMLPBert2(
-            embed_dim=embed_dim,
-            dense_dim=dense_dim,
-            transfo_dim=transfo_dim,
-            transfo_heads=transfo_heads,
-            transfo_layers=transfo_layers,
-            num_classes=num_classes,
-            num_classes_aux=num_classes_aux,
-            n_landmarks=n_landmarks,
-            drop_rate=drop_rate,
-            max_len=max_len,
-        )
-    elif name == "mlp_bert_3":
+    if name == "mlp_bert_3" or name == "mlp_bert_4":
         model = SignMLPBert3(
             embed_dim=embed_dim,
             dense_dim=dense_dim,
@@ -89,35 +62,6 @@ def define_model(
             drop_rate=drop_rate,
             max_len=max_len,
         )
-    elif name == "mlp_bert_4":
-        model = SignMLPBert4(
-            embed_dim=embed_dim,
-            dense_dim=dense_dim,
-            transfo_dim=transfo_dim,
-            transfo_heads=transfo_heads,
-            transfo_layers=transfo_layers,
-            num_classes=num_classes,
-            num_classes_aux=num_classes_aux,
-            n_landmarks=n_landmarks,
-            drop_rate=drop_rate,
-            max_len=max_len,
-        )
-    elif name =="mlp_cnn":
-        model = SignMLPCNN(
-            embed_dim=embed_dim,
-            transfo_dim=transfo_dim,
-            transfo_heads=transfo_heads,
-            num_classes=num_classes,
-            drop_rate=drop_rate,
-        )
-    elif name =="gcn":
-        model = SignGCN(
-            embed_dim=embed_dim,
-            transfo_dim=transfo_dim,
-            transfo_heads=transfo_heads,
-            num_classes=num_classes,
-            drop_rate=drop_rate,
-        )
     else:
         raise NotImplementedError
 
@@ -125,856 +69,261 @@ def define_model(
         model = load_model_weights(
             model, pretrained_weights, verbose=verbose, strict=False
         )
-        
+
     model.name = name
 
     return model
 
 
-class SignGCN(nn.Module):
-    """
-    Model with an attention mechanism.
-    """
-
-    def __init__(
-        self,
-        embed_dim=256,
-        transfo_dim=768,
-        transfo_heads=1,
-        num_classes=250,
-        n_landmarks=100,
-        transfo_layers=4,
-        drop_rate=0,
-    ):
-        """
-        Constructor.
-
-        Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
-        """
-        super().__init__()
-        self.num_classes = num_classes
-        self.num_classes_aux = 0
-        self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
-
-        self.type_embed = nn.Embedding(12, embed_dim, padding_idx=0)
-        self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
-        self.type_norm = nn.LayerNorm(embed_dim)
-        self.landmark_norm = nn.LayerNorm(embed_dim)
-
-        self.pos_dense = nn.Linear(9, embed_dim)
-        self.dense = nn.Linear(3 * embed_dim, embed_dim)
-
-        self.gcn = DecoupledGCN(embed_dim, dim=transfo_dim, n_landmarks=n_landmarks)
-
-        self.logits = nn.Linear(transfo_dim, num_classes)
-
-    def forward(self, x, return_fts=False):
-        """
-        Forward function.
-
-        Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
-
-        Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
-        """
-        bs, n_frames, n_landmarks = x["x"].size()
-
-        x_type = self.type_norm(self.type_embed(x["type"]))
-        x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
-        x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
-
-        x_pos = add_shift(x_pos)
-        x_pos = self.pos_dense(x_pos)
-
-        fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))  # bs x frames x landmarks x n_fts
-        
-        fts = fts.permute(0, 3, 1, 2)
-        fts = fts + self.gcn(fts)
-        
-#         print(fts.size())
-        
-        fts = fts.mean(-1).mean(-1)
-
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-
-        return logits, torch.zeros(1)
-
-    
-class SignMLPCNN(nn.Module):
-    """
-    Model with an attention mechanism.
-    """
-
-    def __init__(
-        self,
-        embed_dim=256,
-        transfo_dim=768,
-        transfo_heads=1,
-        num_classes=250,
-        n_landmarks=100,
-        transfo_layers=4,
-        drop_rate=0,
-    ):
-        """
-        Constructor.
-
-        Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
-        """
-        super().__init__()
-        self.num_classes = num_classes
-        self.num_classes_aux = 0
-        self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
-
-        self.type_embed = nn.Embedding(12, embed_dim, padding_idx=0)
-        self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
-        self.type_norm = nn.LayerNorm(embed_dim)
-        self.landmark_norm = nn.LayerNorm(embed_dim)
-
-        self.pos_dense = nn.Linear(9, embed_dim)
-        self.dense = nn.Linear(3 * embed_dim, embed_dim)
-
-        self.left_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, transfo_dim), 
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.right_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21 , transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.lips_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.face_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 25, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.full_mlp = nn.Sequential(
-            nn.Linear(embed_dim * n_landmarks, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.landmark_mlp = nn.Sequential(
-            nn.Linear(transfo_dim * 4, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.cnn = ResNet(Bottleneck, [1, 1, 1, 1], ft_dim=transfo_dim, n_layers=transfo_layers)
-
-        self.logits = nn.Linear(self.cnn.layers[-1][0].conv3.out_channels, num_classes)
-
-    def forward(self, x, return_fts=False):
-        """
-        Forward function.
-
-        Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
-
-        Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
-        """
-        bs, n_frames, n_landmarks = x["x"].size()
-
-        x_type = self.type_norm(self.type_embed(x["type"]))
-        x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
-        x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
-
-        x_pos = add_shift(x_pos)
-        x_pos = self.pos_dense(x_pos)
-
-        fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))
-
-        n_fts = fts.size(-1)
-        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)
-
-        left_hand_fts = fts.view(-1, n_fts)[embed == 5].view(bs, n_frames, -1, n_fts)
-        left_hand_fts = self.left_hand_mlp(left_hand_fts.view(bs * n_frames, -1))
-
-        right_hand_fts = fts.view(-1, n_fts)[embed == 10].view(bs, n_frames, -1, n_fts)
-        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
-        
-        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).max(-1).values
-
-        lips_fts = fts.view(-1, n_fts)[embed == 6].view(bs, n_frames, -1, n_fts)
-        lips_fts = self.lips_mlp(lips_fts.view(bs * n_frames, -1))
-
-        face_fts = fts.view(-1, n_fts)[torch.isin(embed, torch.tensor([11, 2, 3, 4, 8, 9, 7]).to(fts.device))].view(bs, n_frames, -1, n_fts)
-        face_fts = self.face_mlp(face_fts.view(bs * n_frames, -1))
-        
-        fts = fts.view(-1, n_fts).view(bs, n_frames, -1, n_fts)
-        fts = fts.view(bs * n_frames, -1)
-    
-        fts = self.full_mlp(fts)
-
-        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)
-
-        fts = self.landmark_mlp(fts)
-        fts = fts.view(bs, n_frames, -1).transpose(1, 2)
-    
-        fts = self.cnn(fts)
-
-        fts = fts.mean(-1)
-
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-
-        return logits, torch.zeros(1)
-
-    
-class Identity(nn.Module):
-    def forward(self, x, y=None):
-        return x
-
-    
-class SignMLPBert2(nn.Module):
-    """
-    Model with an attention mechanism.
-    """
-
-    def __init__(
-        self,
-        embed_dim=256,
-        transfo_dim=768,
-        dense_dim=512,
-        transfo_heads=1,
-        n_landmarks=100,
-        transfo_layers=4,
-        num_classes=250,
-        num_classes_aux=0,
-        drop_rate=0,
-        max_len=40,
-    ):
-        """
-        Constructor.
-
-        Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
-        """
-        super().__init__()
-        self.num_classes = num_classes
-        self.num_classes_aux = num_classes_aux
-        self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
-
-        self.type_embed = nn.Embedding(12, embed_dim, padding_idx=0)
-        self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
-        self.type_norm = nn.LayerNorm(embed_dim)
-        self.landmark_norm = nn.LayerNorm(embed_dim)
-
-        self.pos_dense = nn.Linear(9, embed_dim)
-        self.dense = nn.Linear(3 * embed_dim, embed_dim)
-
-        self.left_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim), 
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.right_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21 , dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.lips_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.face_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 25, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.full_mlp = nn.Sequential(
-            nn.Linear(embed_dim * (n_landmarks), dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.landmark_mlp = nn.Sequential(
-            nn.Linear(dense_dim * 4, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-#         self.cnn = ResNet(Bottleneck, [1, 1, 1, 1], ft_dim=transfo_dim, n_layers=4)
-
-        name = "microsoft/deberta-v3-base"
-        config = AutoConfig.from_pretrained(name, output_hidden_states=True)
-        config.hidden_size = transfo_dim
-        config.intermediate_size = transfo_dim
-        config.num_hidden_layers = transfo_layers
-        config.num_attention_heads = transfo_heads
-        config.attention_probs_dropout_prob = drop_rate / 2 if transfo_dim <= 384 else drop_rate
-        config.hidden_dropout_prob = drop_rate / 2 if transfo_dim <= 384 else drop_rate
-        config.hidden_act = "relu"
-        config.max_relative_positions = max_len
-        config.position_buckets = max_len
-
-        self.frame_transformer = DebertaV2Encoder(config)
-        
-#         for layer in self.frame_transformer.layer:
-#             layer.intermediate = nn.Identity()
-#             layer.output = Identity()
-
-        self.logits = nn.Linear(transfo_dim, num_classes)  # * 5
-        if num_classes_aux:
-            self.logits_aux = nn.Linear(transfo_dim, num_classes_aux)
-
-    def forward(self, x, return_fts=False):
-        """
-        Forward function.
-
-        Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
-
-        Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
-        """
-        bs, n_frames, n_landmarks = x["x"].size()
-
-        x_type = self.type_norm(self.type_embed(x["type"]))
-        x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
-        x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
-
-        x_pos = add_shift(x_pos)
-#         x_pos = self.add_speed(x_pos)
-        x_pos = self.pos_dense(x_pos)
-
-#         x_pos = x_pos.transpose(1, 2).contiguous().view(bs * n_landmarks, n_frames, -1).transpose(-1, -2).contiguous()
-#         x_pos = self.pos_cnn(x_pos)
-#         x_pos = x_pos.transpose(-1, -2).contiguous().view(bs, n_landmarks, n_frames, -1).transpose(1, 2).contiguous()
-
-        fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))
-
-        n_fts = fts.size(-1)
-        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)
-
-        left_hand_fts = fts.view(-1, n_fts)[embed == 5].view(bs, n_frames, -1, n_fts)
-        left_hand_fts = self.left_hand_mlp(left_hand_fts.view(bs * n_frames, -1))
-
-        right_hand_fts = fts.view(-1, n_fts)[embed == 10].view(bs, n_frames, -1, n_fts)
-        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
-        
-        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).max(-1).values
-
-        lips_fts = fts.view(-1, n_fts)[embed == 6].view(bs, n_frames, -1, n_fts)
-        lips_fts = self.lips_mlp(lips_fts.view(bs * n_frames, -1))
-
-        face_fts = fts.view(-1, n_fts)[torch.isin(embed, torch.tensor([11, 2, 3, 4, 8, 9, 7]).to(fts.device))].view(bs, n_frames, -1, n_fts)
-        face_fts = self.face_mlp(face_fts.view(bs * n_frames, -1))
-        
-#         fts = fts.view(-1, n_fts).view(bs, n_frames, -1, n_fts)
-#         fts = fts.view(-1, n_fts)[
-#             embed != 1  # pose
-#         ].view(bs, n_frames, -1, n_fts)
-#         print(fts.size())
-        fts = fts.view(bs * n_frames, -1)
-    
-        fts = self.full_mlp(fts)
-
-        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)
-
-        fts = self.landmark_mlp(fts)
-        fts = fts.view(bs, n_frames, -1)
-        
-#         fts = self.cnn(fts.transpose(1, 2)).transpose(1, 2)
-
-        mask = x["mask"][:, :, 0]
-#         mask = mask.repeat(self.transfo_heads, 1)
-#         mask = (1 - mask) * torch.finfo(mask.dtype).min
-#         print(mask.size(), fts.size())
-        fts = self.frame_transformer(fts, mask).last_hidden_state
-
-#         fts = self.frame_transformer(
-#             fts, mask, output_hidden_states=True
-#         ).hidden_states
-#         fts = torch.cat(fts, -1)
-#         fts = fts.view(bs, n_frames, -1)
-
-        mask = x["mask"][:, :, 0].unsqueeze(-1)
-        fts = fts * mask
-        fts = fts.sum(1) / mask.sum(1)  # masked avg
-
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-            
-        logits_aux = self.logits_aux(fts) if self.num_classes_aux else torch.zeros(1)
-        return logits, logits_aux
-
-    
-from torch.nn import LayerNorm
-from transformers.models.deberta_v2.modeling_deberta_v2 import StableDropout
-
-
 class DebertaV2Output(nn.Module):
+    """
+    Modified DebertaV2Output Layer. We changed the position of the skip connection,
+    to allow for output_size != intermediate_size.
+
+    Attributes:
+        dense (Linear): The linear transformation layer.
+        LayerNorm (LayerNorm): The layer normalization layer.
+        dropout (StableDropout): The dropout layer.
+        config (DebertaV2Config): The model configuration class instance.
+
+    Methods:
+        __init__(self, config): Initializes a DebertaV2Output instance with the specified config.
+        forward(self, hidden_states, input_tensor): Performs the forward pass.
+    """
     def __init__(self, config):
+        """
+        Constructor.
+
+        Args:
+            config (DebertaV2Config): The model configuration class instance.
+        """
         super().__init__()
         self.dense = nn.Linear(config.intermediate_size, config.output_size)
-#         self.dense_2 = nn.Linear(config.hidden_size, config.output_size)
         self.LayerNorm = LayerNorm(config.output_size, config.layer_norm_eps)
         self.dropout = StableDropout(config.hidden_dropout_prob)
         self.config = config
 
     def forward(self, hidden_states, input_tensor):
-#         print(hidden_states.size(), input_tensor.size())
-        hidden_states = self.dense(hidden_states + input_tensor)
+        """
+        Performs the forward pass.
+
+        Args:
+            hidden_states (Tensor): The hidden states from the previous layer.
+            input_tensor (Tensor): The input tensor.
+
+        Returns:
+            Tensor: The output tensor.
+        """
+        if self.config.skip_output:
+            hidden_states = self.dense(hidden_states + input_tensor)
+        else:
+            hidden_states = self.dense(hidden_states)
+
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states)
         return hidden_states
-    
-#     def forward(self, hidden_states, input_tensor):
-#         hidden_states = self.dense(hidden_states)
-#         hidden_states = self.dropout(hidden_states)
-#         input_tensor = self.dense_2(input_tensor)
-#         hidden_states = self.LayerNorm(hidden_states + input_tensor)
-#         return hidden_states
 
 
 class SignMLPBert3(nn.Module):
     """
-    Model with an attention mechanism.
-    """
+    MLP + Deberta architecture.
 
+    Attributes:
+        num_classes (int): The number of classes for the main task.
+        num_classes_aux (int): The number of classes for auxiliary tasks.
+        transfo_heads (int): The number of attention heads in the transformer.
+        transfo_layers (int): The number of transformer layers.
+        max_len (int): The maximum length of input sequences.
+
+        type_embed (nn.Embedding): Embedding layer for the type input.
+        landmark_embed (nn.Embedding): Embedding layer for the landmark input.
+        type_norm (nn.LayerNorm): Layer normalization for the type embeddings.
+        landmark_norm (nn.LayerNorm): Layer normalization for the landmark embeddings.
+        pos_cnn (nn.Sequential): CNN layers for positional encoding.
+        pos_dense (nn.Linear): Dense layer for positional encoding.
+        dense (nn.Linear): Dense layer for combining input features.
+        left_hand_mlp (nn.Sequential): MLP layers for left hand features.
+        right_hand_mlp (nn.Sequential): MLP layers for right hand features.
+        lips_mlp (nn.Sequential): MLP layers for lips features.
+        face_mlp (nn.Sequential): MLP layers for face features.
+        full_mlp (nn.Sequential): MLP layers for all features.
+        landmark_mlp (nn.Sequential): MLP layers for landmark features.
+        frame_transformer_1 (DebertaV2Encoder): First DeBERTa transformer layer.
+        frame_transformer_2 (DebertaV2Encoder): Second DeBERTa transformer layer (optional).
+        frame_transformer_3 (DebertaV2Encoder): Third DeBERTa transformer layer (optional).
+        logits (nn.Linear): Linear layer for main task classification.
+        logits_aux (nn.Linear): Linear layer for auxiliary task classification (optional).
+
+    Methods:
+        __init__(self, embed_dim, transfo_dim, dense_dim, transfo_heads, transfo_layers, drop_rate,
+                 num_classes,num_classes_aux, n_landmarks, max_len): Constructor
+        forward(self, x, perm, coefs): Performs the forward pass.
+    """
     def __init__(
         self,
         embed_dim=256,
         transfo_dim=768,
         dense_dim=512,
         transfo_heads=1,
-        n_landmarks=100,
         transfo_layers=4,
+        drop_rate=0,
         num_classes=250,
         num_classes_aux=0,
-        drop_rate=0,
+        n_landmarks=100,
         max_len=40,
     ):
         """
         Constructor.
 
         Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
+            embed_dim (int, optional): The embedding dimension. Defaults to 256.
+            dense_dim (int, optional): The dense layer dimension. Defaults to 512.
+            transfo_dim (int, optional): The transformer layer dimension. Defaults to 768.
+            transfo_heads (int, optional): Number of attention heads. Defaults to 8.
+            drop_rate (float, optional): The dropout rate. Defaults to 0.
+            transfo_layers (int, optional): The number of transformer layers. Defaults to 4.
+            num_classes (int, optional): The number of classes for the main task. Defaults to 250.
+            num_classes_aux (int, optional): Number of classes for auxiliary tasks. Defaults to 0.
+            n_landmarks (int, optional): The number of landmarks. Defaults to 100.
+            max_len (int, optional): The maximum length of input sequences. Defaults to 40.
         """
         super().__init__()
         self.num_classes = num_classes
         self.num_classes_aux = num_classes_aux
         self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
+        self.transfo_layers = transfo_layers
+        self.max_len = max_len
 
         self.type_embed = nn.Embedding(9, embed_dim, padding_idx=0)
         self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
         self.type_norm = nn.LayerNorm(embed_dim)
         self.landmark_norm = nn.LayerNorm(embed_dim)
 
-        self.pos_dense = nn.Linear(9, embed_dim)
+        self.pos_cnn = nn.Sequential(
+            nn.Conv1d(3, 8, kernel_size=5, padding=2, bias=False),
+            nn.Conv1d(8, 16, kernel_size=5, padding=2, bias=False),
+        )
+        self.pos_dense = nn.Linear(19, embed_dim)
+
         self.dense = nn.Linear(3 * embed_dim, embed_dim)
 
-#         self.dists_mlp = nn.Sequential(
-#             nn.Linear(50 + 210, dense_dim), 
-#             nn.BatchNorm1d(dense_dim),
-#             nn.Dropout(p=drop_rate),
-#             nn.LeakyReLU(),
-#         )
-
+        drop_mlp = drop_rate if dense_dim >= 256 else drop_rate / 2
         self.left_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim), 
+            nn.Linear(embed_dim * 21, dense_dim),
             nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Dropout(p=drop_mlp),
+            nn.Mish(),
         )
 
         self.right_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21 , dense_dim),
+            nn.Linear(embed_dim * 21, dense_dim),
             nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Dropout(p=drop_mlp),
+            nn.Mish(),
         )
 
         self.lips_mlp = nn.Sequential(
             nn.Linear(embed_dim * 21, dense_dim),
             nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Dropout(p=drop_mlp),
+            nn.Mish(),
         )
-        
+
         self.face_mlp = nn.Sequential(
             nn.Linear(embed_dim * 25, dense_dim),
             nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Dropout(p=drop_mlp),
+            nn.Mish(),
         )
 
         self.full_mlp = nn.Sequential(
             nn.Linear(embed_dim * n_landmarks, dense_dim),
             nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Dropout(p=drop_mlp),
+            nn.Mish(),
         )
 
-        
-        delta = 128 if transfo_dim < 1000 else 256
-        transfo_dim -= delta * (transfo_layers - 1)
-#         transfo_dim -= delta * 2
+        transfo_dim_ = transfo_dim
+        if transfo_layers == 3:  # 512, 768, 1024 / 768
+            if transfo_dim <= 1024:
+                delta = min(256, transfo_dim - 512)
+                transfo_dim = 512
+            else:  # BIG Models
+                delta = (transfo_dim - 1024) // 2
+                transfo_dim = 1024
+        else:  # 768, 768
+            delta = 0
 
         self.landmark_mlp = nn.Sequential(
             nn.Linear(dense_dim * 4, transfo_dim),
             nn.BatchNorm1d(transfo_dim),
             nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-    
-#         pos_embed = positional_encoding(max_len, transfo_dim)
-#         self.pos_embed = nn.Parameter(pos_embed)
-
-        name = "microsoft/deberta-v3-base"
-        
-        config = AutoConfig.from_pretrained(name, output_hidden_states=True)
-        config.hidden_size = transfo_dim
-        config.intermediate_size = transfo_dim
-        config.output_size = transfo_dim + delta
-        config.num_hidden_layers = 1
-        config.num_attention_heads = transfo_heads
-        config.attention_probs_dropout_prob = drop_rate
-        config.hidden_dropout_prob = drop_rate
-        config.hidden_act = "relu"
-        config.max_relative_positions = max_len
-        config.position_buckets = max_len
-
-        self.frame_transformer_1 = DebertaV2Encoder(config)
-        self.frame_transformer_1.layer[0].output = DebertaV2Output(config)
-
-        config.hidden_size += delta
-        config.intermediate_size += delta
-        if transfo_layers >= 3:
-            config.output_size += delta
-        config.attention_probs_dropout_prob *= 2
-        config.hidden_dropout_prob *= 2
-        self.frame_transformer_2 = DebertaV2Encoder(config)
-        self.frame_transformer_2.layer[0].output = DebertaV2Output(config)
-
-        self.frame_transformer_3 = None
-        if transfo_layers >= 3:
-            config.hidden_size += delta
-            config.intermediate_size += delta
-
-            if transfo_layers == 4:
-                config.output_size += delta
-            config.attention_probs_dropout_prob *= 2
-            config.hidden_dropout_prob *= 2
-
-            self.frame_transformer_3 = DebertaV2Encoder(config)
-            self.frame_transformer_3.layer[0].output = DebertaV2Output(config)
-
-        self.frame_transformer_4 = None
-        if transfo_layers == 4:
-            config.hidden_size += delta
-            config.intermediate_size += delta
-
-            config.attention_probs_dropout_prob *= 2
-            config.hidden_dropout_prob *= 2
-
-            self.frame_transformer_4 = DebertaV2Encoder(config)
-            self.frame_transformer_4.layer[0].output = DebertaV2Output(config)
-
-
-        self.logits = nn.Linear(config.output_size, num_classes)  # * 5
-        if num_classes_aux:
-            self.logits_aux = nn.Linear(transfo_dim, num_classes_aux)
-
-    def forward(self, x, return_fts=False):
-        """
-        Forward function.
-
-        Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
-
-        Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
-        """
-        bs, n_frames, n_landmarks = x["x"].size()
-
-        x_type = self.type_norm(self.type_embed(x["type"]))
-        x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
-        x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
-
-#         dists = torch.cat([
-#             compute_finger_face_distance(x_pos),
-#             compute_hand_features(x_pos, x["type"])
-#         ], -1)
-#         dists_fts = self.dists_mlp(dists.view(bs * n_frames, -1))
-
-        x_pos = add_shift(x_pos)
-        x_pos = self.pos_dense(x_pos)
-
-        fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))
-
-        n_fts = fts.size(-1)
-        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)
-
-        left_hand_fts = fts.view(-1, n_fts)[embed == 1].view(bs, n_frames, -1, n_fts)
-        left_hand_fts = self.left_hand_mlp(left_hand_fts.view(bs * n_frames, -1))
-
-        right_hand_fts = fts.view(-1, n_fts)[embed == 2].view(bs, n_frames, -1, n_fts)
-        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
-        
-        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).max(-1).values
-
-        lips_fts = fts.view(-1, n_fts)[embed == 4].view(bs, n_frames, -1, n_fts)
-        lips_fts = self.lips_mlp(lips_fts.view(bs * n_frames, -1))
-
-        face_fts = fts.view(-1, n_fts)[torch.isin(embed, torch.tensor([3, 6]).to(fts.device))].view(bs, n_frames, -1, n_fts)
-        face_fts = self.face_mlp(face_fts.view(bs * n_frames, -1))
-        
-        fts = fts.view(bs * n_frames, -1)
-    
-        fts = self.full_mlp(fts)
-
-        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)  # dists_fts
-
-        fts = self.landmark_mlp(fts)
-        fts = fts.view(bs, n_frames, -1)
-        
-#         fts = self.cnn(fts.transpose(1, 2)).transpose(1, 2)
-#         fts = fts + self.pos_embed[:n_frames].unsqueeze(0)
-
-        mask = x["mask"][:, :, 0]
-        fts *= mask.unsqueeze(-1)  # probably useless but kept for now
-
-        fts = self.frame_transformer_1(fts, mask).last_hidden_state
-        fts = self.frame_transformer_2(fts, mask).last_hidden_state
-        if self.frame_transformer_3 is not None:
-            fts = self.frame_transformer_3(fts, mask).last_hidden_state
-        if self.frame_transformer_4 is not None:
-            fts = self.frame_transformer_4(fts, mask).last_hidden_state
-
-        mask = x["mask"][:, :, 0].unsqueeze(-1)
-        fts = fts * mask
-        fts = fts.sum(1) / mask.sum(1)  # masked avg
-
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-            
-        logits_aux = self.logits_aux(fts) if self.num_classes_aux else torch.zeros(1)
-        return logits, logits_aux
-
-
-class SignMLPBert4(nn.Module):
-    """
-    Model with an attention mechanism.
-    """
-
-    def __init__(
-        self,
-        embed_dim=256,
-        transfo_dim=768,
-        dense_dim=512,
-        transfo_heads=1,
-        n_landmarks=100,
-        transfo_layers=4,
-        num_classes=250,
-        num_classes_aux=0,
-        drop_rate=0,
-        max_len=40,
-    ):
-        """
-        Constructor.
-
-        Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
-        """
-        super().__init__()
-        self.num_classes = num_classes
-        self.num_classes_aux = num_classes_aux
-        self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
-
-        self.type_embed = nn.Embedding(9, embed_dim, padding_idx=0)
-        self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
-        self.type_norm = nn.LayerNorm(embed_dim)
-        self.landmark_norm = nn.LayerNorm(embed_dim)
-
-        self.pos_dense = nn.Linear(9, embed_dim)
-        self.dense = nn.Linear(3 * embed_dim, embed_dim)
-
-        self.left_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim), 
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.right_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21 , dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.lips_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.face_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 25, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.full_mlp = nn.Sequential(
-            nn.Linear(embed_dim * n_landmarks, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.landmark_mlp = nn.Sequential(
-            nn.Linear(dense_dim * 4, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
+            nn.Mish(),
         )
 
         name = "microsoft/deberta-v3-base"
-        
+
         config = AutoConfig.from_pretrained(name, output_hidden_states=True)
         config.hidden_size = transfo_dim
         config.intermediate_size = transfo_dim
         config.output_size = transfo_dim
+        if transfo_layers >= 2:
+            config.output_size = transfo_dim + delta
         config.num_hidden_layers = 1
         config.num_attention_heads = transfo_heads
-        config.attention_probs_dropout_prob = drop_rate  #  / 2 # if transfo_dim == 384 else drop_rate
-        config.hidden_dropout_prob = drop_rate  #  / 2 # if transfo_dim == 384 else drop_rate
-        config.hidden_act = "relu"
+        config.attention_probs_dropout_prob = drop_rate
+        config.hidden_dropout_prob = drop_rate
+        config.hidden_act = nn.Mish()  # "relu"
         config.max_relative_positions = max_len
         config.position_buckets = max_len
+        config.skip_output = True
 
-        config.output_size -= 64
         self.frame_transformer_1 = DebertaV2Encoder(config)
         self.frame_transformer_1.layer[0].output = DebertaV2Output(config)
 
-        config.output_size -= 64
-        config.hidden_size -= 64
-        config.intermediate_size -= 64
-        config.attention_probs_dropout_prob *= 0.75
-        config.hidden_dropout_prob *= 0.75
-        self.frame_transformer_2 = DebertaV2Encoder(config)
-        self.frame_transformer_2.layer[0].output = DebertaV2Output(config)
+        self.frame_transformer_2 = None
+        if transfo_layers >= 2:
+            config.hidden_size += delta
+            config.intermediate_size += delta
 
-        config.hidden_size -= 64
-        config.intermediate_size -= 64
-        config.attention_probs_dropout_prob *= 0.75
-        config.hidden_dropout_prob *= 0.75
-        self.frame_transformer_3 = DebertaV2Encoder(config)
-        self.frame_transformer_3.layer[0].output = DebertaV2Output(config)
-        
-        if transfo_layers == 4:
-            config.hidden_size -= 128
-            config.intermediate_size -= 128
-            config.attention_probs_dropout_prob /= 2
-            config.hidden_dropout_prob /= 2
-            self.frame_transformer_4 = DebertaV2Encoder(config)
-            self.frame_transformer_4.layer[0].output = DebertaV2Output(config)
-        else:
-            self.frame_transformer_4 = None
+            if transfo_layers >= 3 and transfo_dim_ >= 1024:
+                config.output_size += delta
 
-        self.logits = nn.Linear(config.output_size, num_classes)  # * 5
+            if delta > 0:
+                config.attention_probs_dropout_prob *= 2
+                config.hidden_dropout_prob *= 2
+
+            self.frame_transformer_2 = DebertaV2Encoder(config)
+            self.frame_transformer_2.layer[0].output = DebertaV2Output(config)
+
+        self.frame_transformer_3 = None
+        if transfo_layers >= 3:
+            if transfo_dim_ >= 1024:
+                config.hidden_size += delta
+                config.intermediate_size += delta
+                config.attention_probs_dropout_prob *= 2
+                config.hidden_dropout_prob *= 2
+                config.output_size += delta
+
+            config.output_size -= delta
+            self.frame_transformer_3 = DebertaV2Encoder(config)
+            self.frame_transformer_3.layer[0].output = DebertaV2Output(config)
+
+        self.logits = nn.Linear(config.output_size, num_classes)
         if num_classes_aux:
-            self.logits_aux = nn.Linear(transfo_dim, num_classes_aux)
+            self.logits_aux = nn.Linear(config.output_size, num_classes_aux)
 
-    def forward(self, x, return_fts=False):
+    def forward(self, x, perm=None, coefs=None):
         """
-        Forward function.
+        Performs the forward pass.
 
         Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
+            x (Tensor): The input tensor containing sign language data.
+            perm (Tensor, optional): Permutation tensor for Manifold Mixup. Defaults to None.
+            coefs (Tensor, optional): Coefficients tensor for Manifold Mixup. Defaults to None.
 
         Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
+            Tuple[Tensor, Tensor]: The main task logits and auxiliary task logits (if applicable).
         """
         bs, n_frames, n_landmarks = x["x"].size()
 
@@ -982,237 +331,114 @@ class SignMLPBert4(nn.Module):
         x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
         x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
 
-        x_pos = add_shift(x_pos)
+        x_pos = x_pos.transpose(1, 2).transpose(2, 3).contiguous().view(
+            bs * n_landmarks, -1, n_frames
+        )
+        x_pos = self.pos_cnn(x_pos)
+        x_pos = x_pos.view(
+            bs, n_landmarks, -1, n_frames
+        ).transpose(2, 3).transpose(1, 2).contiguous()
+        x_pos = torch.cat([torch.stack([x["x"], x["y"], x["z"]], -1), x_pos], -1)
+
         x_pos = self.pos_dense(x_pos)
 
         fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))
 
         n_fts = fts.size(-1)
-        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)
+        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)  # this handles padding
 
+        # LEFT HAND FEATURES
         left_hand_fts = fts.view(-1, n_fts)[embed == 1].view(bs, n_frames, -1, n_fts)
+
+        mask = x["mask"][:, :, 0][:, :, None, None]
+        mask_left_hand = mask.repeat(1, 1, left_hand_fts.shape[2], n_fts)
+        m = left_hand_fts * mask_left_hand
+        m = m.sum((1, 2)) / mask_left_hand.sum((1, 2))  # masked avg
+        left_hand_fts = left_hand_fts - m[:, None, None, :]
+        left_hand_fts = left_hand_fts * mask_left_hand
         left_hand_fts = self.left_hand_mlp(left_hand_fts.view(bs * n_frames, -1))
 
+        # RIGHT HAND FEATURES
         right_hand_fts = fts.view(-1, n_fts)[embed == 2].view(bs, n_frames, -1, n_fts)
-        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
-        
-        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).max(-1).values
 
+        mask_right_hand = mask.repeat(1, 1, right_hand_fts.shape[2], n_fts)
+        m = right_hand_fts * mask_right_hand
+        m = m.sum((1, 2)) / mask_right_hand.sum((1, 2))  # masked avg
+        right_hand_fts = right_hand_fts - m[:, None, None, :]
+        right_hand_fts = right_hand_fts * mask_right_hand
+
+        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
+
+        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).amax(-1)
+
+        # LIPS FEATURES
         lips_fts = fts.view(-1, n_fts)[embed == 4].view(bs, n_frames, -1, n_fts)
+
+        mask_lips = mask.repeat(1, 1, lips_fts.shape[2], n_fts)
+        m = lips_fts * mask_lips
+        m = m.sum((1, 2)) / mask_lips.sum((1, 2))  # masked avg
+        lips_fts = lips_fts - m[:, None, None, :]
+        lips_fts = lips_fts * mask_lips
+
         lips_fts = self.lips_mlp(lips_fts.view(bs * n_frames, -1))
 
-        face_fts = fts.view(-1, n_fts)[torch.isin(embed, torch.tensor([3, 6]).to(fts.device))].view(bs, n_frames, -1, n_fts)
+        # FACE FEATURES
+        face_fts = fts.view(-1, n_fts)[
+            torch.isin(embed, torch.tensor([3, 6]).to(fts.device))
+        ].view(bs, n_frames, -1, n_fts)
+
+        mask_face = mask.repeat(1, 1, face_fts.shape[2], n_fts)
+        m = face_fts * mask_face
+        m = m.sum((1, 2)) / mask_face.sum((1, 2))  # masked avg
+        face_fts = face_fts - m[:, None, None, :]
+        face_fts = face_fts * mask_face
+
         face_fts = self.face_mlp(face_fts.view(bs * n_frames, -1))
-        
-#         fts = fts.view(-1, n_fts).view(bs, n_frames, -1, n_fts)
-#         fts = fts.view(-1, n_fts)[
-#             embed != 1  # pose
-#         ].view(bs, n_frames, -1, n_fts)  
-# #         print(fts.size())
+
+        # ALL FEATURES
         fts = fts.view(bs * n_frames, -1)
-    
         fts = self.full_mlp(fts)
 
-        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)
+        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)  # dists_fts, hand_edge_fts
 
         fts = self.landmark_mlp(fts)
         fts = fts.view(bs, n_frames, -1)
-        
-#         fts = self.cnn(fts.transpose(1, 2)).transpose(1, 2)
 
-        mask = x["mask"][:, :, 0]
+        mask = x["mask"][:, :, 0][:, :n_frames]
+        mask_avg = mask.unsqueeze(-1)
+
+        fts *= mask.unsqueeze(-1)
+
+        # Manifold Mixup
+        where = np.random.randint(1, self.transfo_layers + 1) if perm is not None else 0
+        coefs = coefs.view(-1, 1, 1) if coefs is not None else None
+
+        if where == 1:
+            fts = coefs * fts + (1 - coefs) * fts[perm]
+            mask = ((mask + mask[perm]) > 0).float()
+            mask_avg = mask.unsqueeze(-1)
+
         fts = self.frame_transformer_1(fts, mask).last_hidden_state
-        fts = self.frame_transformer_2(fts, mask).last_hidden_state
-        fts = self.frame_transformer_3(fts, mask).last_hidden_state
-        if self.frame_transformer_4 is not None:
-            fts = self.frame_transformer_4(fts, mask).last_hidden_state
 
-        mask = x["mask"][:, :, 0].unsqueeze(-1)
-        fts = fts * mask
-        fts = fts.sum(1) / mask.sum(1)  # masked avg
+        if where == 2:
+            fts = coefs * fts + (1 - coefs) * fts[perm]
+            mask = ((mask + mask[perm]) > 0).float()
+            mask_avg = mask.unsqueeze(-1)
 
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-            
-        logits_aux = self.logits_aux(fts) if self.num_classes_aux else torch.zeros(1)
-        return logits, logits_aux
+        if self.frame_transformer_2 is not None:
+            fts = self.frame_transformer_2(fts, mask).last_hidden_state
 
+        if where == 3:
+            fts = coefs * fts + (1 - coefs) * fts[perm]
+            mask = ((mask + mask[perm]) > 0).float()
+            mask_avg = mask.unsqueeze(-1)
 
-class SignMLPHeng(nn.Module):
-    """
-    Model with an attention mechanism.
-    """
+        if self.frame_transformer_3 is not None:
+            fts = self.frame_transformer_3(fts, mask).last_hidden_state
 
-    def __init__(
-        self,
-        embed_dim=256,
-        transfo_dim=768,
-        dense_dim=512,
-        transfo_heads=1,
-        n_landmarks=100,
-        transfo_layers=4,
-        num_classes=250,
-        num_classes_aux=0,
-        drop_rate=0,
-    ):
-        """
-        Constructor.
+        fts = fts * mask_avg
+        fts = fts.sum(1) / mask_avg.sum(1)  # masked avg
 
-        Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
-        """
-        super().__init__()
-        self.num_classes = num_classes
-        self.num_classes_aux = num_classes_aux
-        self.transfo_heads = transfo_heads
-        self.multi_sample_dropout = False
-
-        self.type_embed = nn.Embedding(12, embed_dim, padding_idx=0)
-        self.landmark_embed = nn.Embedding(n_landmarks + 1, embed_dim, padding_idx=0)
-        self.type_norm = nn.LayerNorm(embed_dim)
-        self.landmark_norm = nn.LayerNorm(embed_dim)
-
-        self.pos_dense = nn.Linear(9, embed_dim)
-        self.dense = nn.Linear(3 * embed_dim, embed_dim)
-
-        self.left_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim), 
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.right_hand_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21 , dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.lips_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 21, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.face_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 25, dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-        
-        self.full_mlp = nn.Sequential(
-            nn.Linear(embed_dim * (n_landmarks), dense_dim),
-            nn.BatchNorm1d(dense_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-        self.landmark_mlp = nn.Sequential(
-            nn.Linear(dense_dim * 4, transfo_dim),
-            nn.BatchNorm1d(transfo_dim),
-            nn.Dropout(p=drop_rate),
-            nn.LeakyReLU(),
-        )
-
-
-        self.frame_transformer = HCKTransfo(
-            dim=transfo_dim,
-            num_head=transfo_heads,
-            p=drop_rate,
-            num_block=transfo_layers
-        )
-
-        self.logits = nn.Linear(transfo_dim, num_classes)  # * 5
-        if num_classes_aux:
-            self.logits_aux = nn.Linear(transfo_dim, num_classes_aux)
-
-    def forward(self, x, return_fts=False):
-        """
-        Forward function.
-
-        Args:
-            x (torch tensor [batch_size x c x h x w]): Input batch.
-            return_fts (bool, Optional): Whether to return encoder features.
-
-        Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
-            torch tensor [batch_size x num_features]: Encoder features, if return_fts.
-        """
-        bs, n_frames, n_landmarks = x["x"].size()
-
-        x_type = self.type_norm(self.type_embed(x["type"]))
-        x_landmark = self.landmark_norm(self.landmark_embed(x["landmark"]))
-        x_pos = torch.stack([x["x"], x["y"], x["z"]], -1)
-
-        x_pos = add_shift(x_pos)
-#         x_pos = self.add_speed(x_pos)
-        x_pos = self.pos_dense(x_pos)
-
-#         x_pos = x_pos.transpose(1, 2).contiguous().view(bs * n_landmarks, n_frames, -1).transpose(-1, -2).contiguous()
-#         x_pos = self.pos_cnn(x_pos)
-#         x_pos = x_pos.transpose(-1, -2).contiguous().view(bs, n_landmarks, n_frames, -1).transpose(1, 2).contiguous()
-
-        fts = self.dense(torch.cat([x_type, x_landmark, x_pos], -1))
-
-        n_fts = fts.size(-1)
-        embed = x["type"][:, 0].unsqueeze(1).repeat(1, n_frames, 1).view(-1)
-
-        left_hand_fts = fts.view(-1, n_fts)[embed == 5].view(bs, n_frames, -1, n_fts)
-        left_hand_fts = self.left_hand_mlp(left_hand_fts.view(bs * n_frames, -1))
-
-        right_hand_fts = fts.view(-1, n_fts)[embed == 10].view(bs, n_frames, -1, n_fts)
-        right_hand_fts = self.right_hand_mlp(right_hand_fts.view(bs * n_frames, -1))
-        
-        hand_fts = torch.stack([left_hand_fts, right_hand_fts], -1).max(-1).values
-
-        lips_fts = fts.view(-1, n_fts)[embed == 6].view(bs, n_frames, -1, n_fts)
-        lips_fts = self.lips_mlp(lips_fts.view(bs * n_frames, -1))
-
-        face_fts = fts.view(-1, n_fts)[torch.isin(embed, torch.tensor([11, 2, 3, 4, 8, 9, 7]).to(fts.device))].view(bs, n_frames, -1, n_fts)
-        face_fts = self.face_mlp(face_fts.view(bs * n_frames, -1))
-        
-#         fts = fts.view(-1, n_fts).view(bs, n_frames, -1, n_fts)
-#         fts = fts.view(-1, n_fts)[
-#             embed != 1  # pose
-#         ].view(bs, n_frames, -1, n_fts)
-#         print(fts.size())
-        fts = fts.view(bs * n_frames, -1)
-    
-        fts = self.full_mlp(fts)
-
-        fts = torch.cat([fts, hand_fts, lips_fts, face_fts], -1)
-
-        fts = self.landmark_mlp(fts)
-        fts = fts.view(bs, n_frames, -1)
-
-        mask = x["mask"][:, :, 0]  == 1
-        fts = self.frame_transformer(fts, mask)
-
-        mask = x["mask"][:, :, 0].unsqueeze(-1)
-        mask = torch.cat([torch.ones(bs, 1, 1).to(mask), mask], 1) 
-    
-        fts = fts * mask
-        fts = fts.sum(1) / mask.sum(1)  # masked avg
-
-        if self.multi_sample_dropout and self.training:
-            logits = torch.stack(
-                [self.logits(self.dropout(fts)) for _ in range(5)],
-                dim=0,
-            ).mean(0)
-        else:
-            logits = self.logits(fts)
-            
+        logits = self.logits(fts)
         logits_aux = self.logits_aux(fts) if self.num_classes_aux else torch.zeros(1)
         return logits, logits_aux

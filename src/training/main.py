@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 from torch.nn.parallel import DistributedDataParallel
 
-from params import DATA_PATH
 from training.train import fit
 from model_zoo.models import define_model
 
@@ -26,19 +25,20 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
         df_val (pandas dataframe): Validation metadata.
         fold (int): Selected fold.
         log_folder (None or str, optional): Folder to logs results to. Defaults to None.
-        run (None or Nepture run): Nepture run. Defaults to None.
+        run (neptune.Run): Nepture run. Defaults to None.
 
     Returns:
-        np array [len(df_train) x num_classes]: Validation predictions.
+        np array [len(df_val) x num_classes]: Validation predictions.
     """
     if config.local_rank == 0:
-        print('    -> Data Preparation')
+        print("    -> Data Preparation")
     train_dataset = SignDataset(
         df_train,
         max_len=config.max_len,
         aug_strength=config.aug_strength,
         resize_mode=config.resize_mode,
         train=True,
+        dist=config.mt_config['distill'],
     )
 
     val_dataset = SignDataset(
@@ -48,8 +48,9 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
         train=False,
     )
 
-    train_dataset.fill_buffer()
-    val_dataset.fill_buffer()
+    if config.epochs > 10:
+        train_dataset.fill_buffer()
+        val_dataset.fill_buffer()
 
     if config.pretrained_weights is not None:
         if config.pretrained_weights.endswith(
@@ -57,7 +58,9 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
         ) or config.pretrained_weights.endswith(".bin"):
             pretrained_weights = config.pretrained_weights
         else:  # folder
-            pretrained_weights = glob.glob(config.pretrained_weights + f"*_{fold}.pt")[0]
+            pretrained_weights = glob.glob(config.pretrained_weights + f"*_{fold}.pt")[
+                0
+            ]
     else:
         pretrained_weights = None
 
@@ -77,6 +80,40 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
         verbose=(config.local_rank == 0),
     ).cuda()
 
+    model_teacher = define_model(
+        config.name,
+        pretrained_weights=pretrained_weights,
+        embed_dim=config.embed_dim,
+        transfo_dim=config.transfo_dim,
+        dense_dim=config.dense_dim,
+        transfo_heads=config.transfo_heads,
+        transfo_layers=config.transfo_layers,
+        drop_rate=config.drop_rate,
+        num_classes=config.num_classes,
+        num_classes_aux=config.num_classes_aux,
+        n_landmarks=config.n_landmarks,
+        max_len=config.max_len,
+        verbose=(config.local_rank == 0),
+    ).cuda()
+
+    model_distilled = None
+    if config.mt_config['distill']:
+        model_distilled = define_model(
+            config.name,
+            pretrained_weights=pretrained_weights,
+            embed_dim=config.embed_dim,
+            transfo_dim=config.mt_config['distill_transfo_dim'],
+            dense_dim=config.mt_config['distill_dense_dim'],
+            transfo_heads=config.transfo_heads,
+            transfo_layers=config.mt_config['distill_transfo_layers'],
+            drop_rate=config.drop_rate,
+            num_classes=config.num_classes,
+            num_classes_aux=config.num_classes_aux,
+            n_landmarks=config.n_landmarks,
+            max_len=config.max_len,
+            verbose=0,
+        ).cuda()
+
     if config.distributed:
         if config.syncbn:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -88,30 +125,52 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
             broadcast_buffers=config.syncbn,
         )
 
-    try:
-        model = torch.compile(model, mode="reduce-overhead")
-        if config.local_rank == 0:
-            print("Using torch 2.0 acceleration !\n")
-    except Exception:
-        pass
+        if model_distilled is not None:
+            model_distilled = DistributedDataParallel(
+                model_distilled,
+                device_ids=[config.local_rank],
+                find_unused_parameters=False,
+                broadcast_buffers=config.syncbn,
+            )
+
+#     try:
+#         model = torch.compile(model, mode="reduce-overhead")
+#         if config.local_rank == 0:
+#             print("Using torch 2.0 acceleration !\n")
+#     except Exception:
+#         pass
 
     model.zero_grad(set_to_none=True)
     model.train()
 
-    n_parameters = count_parameters(model)
+    if model_distilled is not None:
+        model_distilled.zero_grad(set_to_none=True)
+        model_distilled.train()
 
+    for param in model_teacher.parameters():
+        param.detach_()
+
+    n_parameters = count_parameters(model)
     if config.local_rank == 0:
         print(f"    -> {len(train_dataset)} training images")
         print(f"    -> {len(val_dataset)} validation images")
-        print(f"    -> {n_parameters} trainable parameters\n")
+        print(f"    -> {n_parameters} trainable parameters")
+        if model_distilled is not None:
+            dist_parameters = count_parameters(model_distilled)
+            print(f"    -> {dist_parameters} distilled parameters\n")
+        else:
+            print("")
 
     pred_val = fit(
         model,
+        model_teacher,
+        model_distilled,
         train_dataset,
         val_dataset,
         config.data_config,
         config.loss_config,
         config.optimizer_config,
+        config.mt_config,
         epochs=config.epochs,
         verbose_eval=config.verbose_eval,
         model_soup=config.model_soup,
@@ -170,18 +229,11 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
             train_idx = list(df[df["fold"] != fold].index)
             val_idx = list(df[df["fold"] == fold].index)
 
-            df_train = df.iloc[train_idx].copy().reset_index(drop=True)
-            df_val = df.iloc[val_idx].copy().reset_index(drop=True)
-            
+            df_train = df.iloc[train_idx].reset_index(drop=True)
+            df_val = df.iloc[val_idx].reset_index(drop=True)
+
             if df_extra is not None:
                 df_train = pd.concat([df_train, df_extra], ignore_index=True)
-                
-#             df_train = df_train[df_train['participant_id'] != 29302]
-#             two_hands = np.concatenate([
-#                 np.load('../output/two_hands_others.npy'),
-#                 np.load('../output/two_hands_29302.npy')
-#             ])
-#             df_train = df_train[~df_train['sequence_id'].isin(two_hands)].reset_index(drop=True)
 
             pred_val = train(
                 config, df_train, df_val, fold, log_folder=log_folder, run=run

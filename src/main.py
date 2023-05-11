@@ -24,14 +24,14 @@
 # import torch_performance_linter
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import time
 import torch
 import warnings
 import argparse
 
-from data.preparation import prepare_data, prepare_wsasl
+from data.preparation import prepare_data
 from params import DATA_PATH
 from utils.torch import init_distributed
 from utils.logger import create_logger, save_config, prepare_log_folder, init_neptune
@@ -85,6 +85,12 @@ def parse_args():
         default=0,
         help="Batch size",
     )
+    parser.add_argument(
+        "--mt-ema-decay",
+        type=float,
+        default=0,
+        help="Mean teacher EMA decay",
+    )
     return parser.parse_args()
 
 
@@ -99,8 +105,8 @@ class Config:
     save_weights = True
 
     # Data
-    processed_folder = "torch_11/"
-    max_len = 30
+    processed_folder = "torch_12/"
+    max_len = 25  # 25, 80
     resize_mode = "pad"
     aug_strength = 3
     use_extra_data = False
@@ -112,19 +118,17 @@ class Config:
     selected_folds = [0, 1, 2, 3]
 
     # Model
-#     name = "gcn"
     name = "mlp_bert_3"
-#     name = "bi_bert"
-    pretrained_weights = None  # "../logs/2023-03-27/19/mlp_bert_2_0.pt"  "../logs/pretrain/2023-03-23/4/mlp_bert_0.pt" 
+    pretrained_weights = None
     syncbn = False
     num_classes = 250
     num_classes_aux = 0
 
     transfo_layers = 3
     embed_dim = 16
-    dense_dim = 256
-    transfo_dim = 1024  # 288
-    transfo_heads = 8
+    dense_dim = 256  # 192 256 512
+    transfo_dim = 1024  # 768 1024
+    transfo_heads = 16
     drop_rate = 0.05
 
     # Training
@@ -134,26 +138,48 @@ class Config:
         "activation": "softmax",
         "aux_loss_weight": 0.,
         "activation_aux": "softmax",
+        "ousm_k": 3,
+        "use_embed": False,
     }
 
     data_config = {
         "batch_size": 32,
         "val_bs": 1024,
-        "use_len_sampler": False,  # trimming is still slower, fix ?
+        "use_len_sampler": False,
+        "mix_proba": 0.5,
+        "mix_alpha": 0.4,
     }
 
     optimizer_config = {
         "name": "AdamW",
-        "lr": 2e-4,
-        "warmup_prop": 0.1,
+        "lr": 3e-4,
+        "warmup_prop": 0.25,
         "betas": (0.9, 0.999),
         "max_grad_norm": 10.,
+        "weight_decay": 0.4,
+#         # AWP
+#         "use_awp": True,
+#         "awp_start_step": 1,
+#         "awp_lr": 1e-3,
+#         "awp_eps": 1e-3,
+#         "awp_period": 1,
     }
 
-    epochs = 120
+    mt_config = {
+        "distill": True,
+        "ema_decay": 0.97,
+        "consistency_weight": 5,
+        "rampup_prop": 0.25,
+        "aux_loss_weight": 0.,
+        "distill_transfo_dim": 576,  # 576
+        "distill_dense_dim": 192,
+        "distill_transfo_layers": 3,
+    }
+
+    epochs = 100
 
     use_fp16 = True
-    model_soup = False
+    model_soup = True
 
     verbose = 1
     verbose_eval = 250
@@ -188,14 +214,15 @@ if __name__ == "__main__":
 
     if args.model:
         config.name = args.model
-        if config.pretrained_weights is not None:
-            config.pretrained_weights = PRETRAINED_WEIGHTS.get(args.model, None)
 
     if args.epochs:
         config.epochs = args.epochs
 
     if args.lr:
         config.optimizer_config["lr"] = args.lr
+        
+    if args.mt_ema_decay:
+        config.mt_config["ema_decay"] = args.mt_ema_decay
 
     if args.batch_size:
         config.data_config["batch_size"] = args.batch_size
@@ -235,15 +262,7 @@ if __name__ == "__main__":
         print("\n -> Training\n")
 
     from training.main import k_fold
-
-
-    df_extra = None
-    if config.use_extra_data:
-        df_extra = prepare_wsasl(DATA_PATH, config.processed_folder[:-1] + "_wlasl/")
-    
-    #     df = df.head(10000).reset_index(drop=True)
-    
-    k_fold(Config, df, df_extra=df_extra, log_folder=log_folder, run=run)
+    k_fold(Config, df, df_extra=None, log_folder=log_folder, run=run)
 
     if config.local_rank == 0:
         print("\nDone !")
