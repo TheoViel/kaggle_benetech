@@ -260,12 +260,22 @@ def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title=""):
 
     Args:
         img (str or numpy.ndarray): The input image path or numpy array.
-        preds (Boxes): The predicted bounding boxes.
+        preds (Boxes or list): The predicted bounding boxes.
         labels (list, optional): The list of labels for each bounding box. Defaults to None.
         gt (Boxes, optional): The ground truth bounding boxes. Defaults to None.
         figsize (tuple, optional): The figure size. Defaults to (15, 6).
         title (str, optional): The plot title. Defaults to "".
     """
+    try:  # Boxes -> np array
+        preds = preds["pascal_voc"]
+    except:
+        pass
+    
+    if isinstance(preds, list):  # list per class -> np array
+        labels = [[i] * len(p) for i, p in enumerate(preds)]
+        labels = np.concatenate([l for l in labels if len(l)]).astype(int)
+        preds = np.concatenate([p for p in preds if len(p)])
+
     plt.figure(figsize=figsize)
     
     if isinstance(img, str):
@@ -275,9 +285,10 @@ def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title=""):
     plt.imshow(img, cmap="gray")
     plt.axis(False)
     
-    cs = ["#1f77b4", "#d62728", "#17becf", "#ff7f0e", "#2ca02c", "#2ca02c"]
+#     cs = ["#000000", "#1f77b4", "#d62728", "#17becf", "#ff7f0e", "#2ca02c", "#2ca02c"]
+    cs = [[0.0, 0.0, 0.0, 0.3], [0.12, 0.47, 0.71, 0.7], [0.84, 0.15, 0.16, 0.7], [0.09, 0.75, 0.81, 0.7], [1.0, 0.5, 0.05, 0.7], [0.17, 0.63, 0.17, 0.7], [0.17, 0.63, 0.17, 0.7]]
 
-    for i, box in enumerate(preds["pascal_voc"]):
+    for i, box in enumerate(preds):
         if labels is not None:
             c = cs[labels[i]]
 
@@ -295,6 +306,7 @@ def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title=""):
             )
             plt.gca().add_patch(rect)
 
+    plt.axis(True)
     plt.title(title)
     plt.show()
     plt.close()

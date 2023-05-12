@@ -75,3 +75,43 @@ def extract_bboxes(df_text, df_elt, h, w):
         bar_boxes = bar_boxes[bar_boxes[:, 3] > 0]
 
     return x_text_boxes, y_text_boxes, x_tick_boxes, y_tick_boxes, point_boxes, bar_boxes
+
+
+def extract_bboxes_2(df, df_text, df_elt, h, w):
+    """
+    Extracts bounding boxes from dataframes and converts them to YOLO format.
+    v2 : uses graph box, ignores bars, larger boxes.
+
+    Args:
+        df_text (pandas.DataFrame): Dataframe containing text bounding box information.
+        df_elt (pandas.DataFrame): Dataframe containing element bounding box information.
+        h (int): The height of the image.
+        w (int): The width of the image.
+
+    Returns:
+        tuple: A tuple containing the following bounding boxes in YOLO format:
+            - x_text_boxes (numpy.ndarray): Bounding boxes for text elements along the x-axis.
+            - y_text_boxes (numpy.ndarray): Bounding boxes for text elements along the y-axis.
+            - x_tick_boxes (numpy.ndarray): Bounding boxes for tick marks along the x-axis.
+            - y_tick_boxes (numpy.ndarray): Bounding boxes for tick marks along the y-axis.
+            - point_boxes (numpy.ndarray): Bounding boxes for point elements.
+            - bar_boxes (numpy.ndarray): Bounding boxes for bar elements.
+    """
+    graph_box = to_yolo_format(df['plot_x0'], df['plot_x0'] + df['plot_w'], df['plot_y0'], df['plot_y0'] + df['plot_h'], h, w)
+
+    text_boxes = to_yolo_format(df_text['x_min'], df_text['x_max'], df_text['y_min'], df_text['y_max'], h, w)
+
+    tick_boxes = to_yolo_format(df_text['x'], df_text['x'], df_text['y'], df_text['y'], h, w)
+    tick_boxes[:, 2] = 8 / w
+    tick_boxes[:, 3] = 8 / h
+    
+    point_boxes = to_yolo_format(df_elt['x'], df_elt['x'], df_elt['y'], df_elt['y'], h, w)
+    point_boxes = point_boxes[~np.isnan(point_boxes[:, 0])]
+    if df['chart-type'].values[0] == "dot":
+        point_boxes[:, 2] = 20 / w
+        point_boxes[:, 3] = 20 / h
+    else:
+        point_boxes[:, 2] = 10 / w
+        point_boxes[:, 3] = 10 / h
+
+    return graph_box, text_boxes, tick_boxes, point_boxes

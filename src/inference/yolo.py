@@ -252,7 +252,8 @@ class InferenceDataset(Dataset):
         df (DataFrame): The DataFrame containing the dataset information.
         paths (numpy.ndarray): The paths to the images in the dataset.
         transforms: Augmentations to apply to the images.
-        gts (list): Ground truth information for each image.
+        gts (list): Ground truth boxes for each image.
+        classes (list): Ground truth classes  for each image.
 
     Methods:
         __init__(self, df, transforms=None): Constructor
@@ -272,12 +273,13 @@ class InferenceDataset(Dataset):
         self.paths = df['path'].values
         self.transforms = transforms
         
-        self.gts = []
+        self.gts, self.classes = [], []
         for i in range(len(df)):
-            with open(df['gt_path'][0], 'r') as f:
+            with open(df['gt_path'][i], 'r') as f:
                 bboxes = np.array([l[:-1].split() for l in f.readlines()]).astype(float)
                 labels, bboxes = bboxes[:, 0], bboxes[:, 1:]
                 self.gts.append(bboxes)
+                self.classes.append(labels)
 
     def __len__(self):
         """
