@@ -254,7 +254,7 @@ def plot_sample(img, boxes_list):
 #             print(box)
 
 
-def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title=""):
+def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title="", save_file="", show=True):
     """
     Plots the results of object detection on an image.
 
@@ -308,5 +308,11 @@ def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title=""):
 
     plt.axis(True)
     plt.title(title)
-    plt.show()
+    
+    if save_file:
+        plt.tight_layout()
+        plt.savefig(save_file)
+
+    if show:
+        plt.show()
     plt.close()

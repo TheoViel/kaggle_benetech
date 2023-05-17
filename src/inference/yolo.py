@@ -275,11 +275,15 @@ class InferenceDataset(Dataset):
         
         self.gts, self.classes = [], []
         for i in range(len(df)):
-            with open(df['gt_path'][i], 'r') as f:
-                bboxes = np.array([l[:-1].split() for l in f.readlines()]).astype(float)
-                labels, bboxes = bboxes[:, 0], bboxes[:, 1:]
-                self.gts.append(bboxes)
-                self.classes.append(labels)
+            try:
+                with open(df['gt_path'][i], 'r') as f:
+                    bboxes = np.array([l[:-1].split() for l in f.readlines()]).astype(float)
+                    labels, bboxes = bboxes[:, 0], bboxes[:, 1:]
+                    self.gts.append(bboxes)
+                    self.classes.append(labels)
+            except Exception:
+                self.gts.append([])
+                self.classes.append([])
 
     def __len__(self):
         """
