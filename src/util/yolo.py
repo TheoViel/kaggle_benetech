@@ -108,10 +108,10 @@ def extract_bboxes_2(df, df_text, df_elt, h, w):
     point_boxes = to_yolo_format(df_elt['x'], df_elt['x'], df_elt['y'], df_elt['y'], h, w)
     point_boxes = point_boxes[~np.isnan(point_boxes[:, 0])]
     if df['chart-type'].values[0] == "dot":
-        point_boxes[:, 2] = 20 / w
-        point_boxes[:, 3] = 20 / h
+        point_boxes[:, 2] = 15 / w
+        point_boxes[:, 3] = 15 / h
     else:
-        point_boxes[:, 2] = 10 / w
-        point_boxes[:, 3] = 10 / h
+        point_boxes[:, 2] = 8 / w
+        point_boxes[:, 3] = 8 / h
 
     return graph_box, text_boxes, tick_boxes, point_boxes

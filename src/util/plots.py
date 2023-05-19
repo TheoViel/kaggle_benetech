@@ -73,7 +73,7 @@ def get_tick_value(name, data_series):
             return el["x"]
 
 
-def plot_annotated_image(name="", width=1000, data_path="../input/"):
+def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, annot=None):
     """
     Plots an annotated image using the image file and annotation data located in the specified
     directory.
@@ -83,10 +83,11 @@ def plot_annotated_image(name="", width=1000, data_path="../input/"):
         width (int): The width of the output figure in pixels.
         data_path (str): The path to the directory containing the image file and annotation data.
     """
-    img = Image.open(f"{data_path}/train/images/{name}.jpg")
-
-    with open(f"{data_path}/train/annotations/{name}.json") as annotation_f:
-        annot = json.load(annotation_f)
+    if img is None:
+        img = Image.open(f"{data_path}/train/images/{name}.jpg")
+    if annot is None:
+        with open(f"{data_path}/train/annotations/{name}.json") as annotation_f:
+            annot = json.load(annotation_f)
 
     # create figure
     fig = go.Figure()
