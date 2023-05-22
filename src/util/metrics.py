@@ -7,6 +7,27 @@ from scipy.optimize import linear_sum_assignment
 from rapidfuzz.distance.Levenshtein import distance as levenshtein
 
 
+def accuracy(labels, predictions, beta=1):
+    """
+    Accuracy metric.
+
+    Args:
+        labels (np array [n]): Labels.
+        predictions (np array [n] or [n x num_classes]): Predictions.
+
+    Returns:
+        float: Accuracy value.
+    """
+    labels = np.array(labels).squeeze()
+    predictions = np.array(predictions).squeeze()
+
+    if len(predictions.shape) > 1:
+        predictions = predictions.argmax(-1)
+
+    acc = (predictions == labels).mean()
+    return acc
+
+
 def iou_score(bbox1, bbox2):
     """
     IoU metric between boxes in the pascal_voc format.

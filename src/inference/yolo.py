@@ -310,7 +310,10 @@ class InferenceDataset(Dataset):
         shape = image.shape
 
         if self.transforms is not None:
-            image = self.transforms(image=image, bboxes=[], class_labels=[])["image"]
+            try:
+                image = self.transforms(image=image, bboxes=[], class_labels=[])["image"]
+            except ValueError:
+                image = self.transforms(image=image)["image"]
 
         return image, self.gts[idx], shape
 

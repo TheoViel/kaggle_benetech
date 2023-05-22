@@ -4,111 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ConsistencyLoss(nn.Module):
-    """
-    Consistency loss module for training a student-teacher model.
-
-    Attributes:
-        consistency_weight (float): Weight for the consistency loss.
-        rampup_length (int): Length of the ramp-up period in steps.
-        aux_loss_weight (float): Weight for the auxiliary loss.
-
-    Methods:
-        __init__(self, config): Constructor.
-        sigmoid_rampup(current): Computes the sigmoid ramp-up value based on the current step.
-        get_consistency_weight(epoch): Computes the consistency weight based on the current epoch.
-        forward(student_pred, teacher_pred, step=1, student_pred_aux=None, teacher_pred_aux=None):
-            Computes the consistency loss between student and teacher predictions.
-    """
-    def __init__(self, config):
-        """
-        Constructor.
-
-        Args:
-            config (dict): Configuration parameters.
-                - consistency_weight (float): Weight for the consistency loss.
-                - rampup_length (int): Length of the ramp-up period in steps.
-                - aux_loss_weight (float, optional): Weight for the auxiliary loss. Defaults to 0.
-        """
-        super().__init__()
-        self.consistency_weight = config["consistency_weight"]
-        self.rampup_length = config["rampup_length"]  # rampup steps
-        self.aux_loss_weight = config.get("aux_loss_weight", 0)
-
-    def sigmoid_rampup(self, current):
-        """
-        Computes the sigmoid ramp-up value based on the current step.
-
-        Args:
-            current (float): Current step.
-
-        Returns:
-            float: Sigmoid ramp-up value.
-
-        """
-        if self.rampup_length == 0:
-            return 1.0
-        current = np.clip(current, 0.0, self.rampup_length)
-        phase = 1.0 - current / self.rampup_length
-        return float(np.exp(-5.0 * phase * phase))
-
-    def get_consistency_weight(self, epoch):
-        """
-        Computes the consistency weight based on the current epoch.
-
-        Args:
-            epoch (int): Current epoch.
-
-        Returns:
-            float: Consistency weight.
-
-        """
-        return self.consistency_weight * self.sigmoid_rampup(epoch)
-
-    def forward(
-        self, student_pred, teacher_pred, step=1, student_pred_aux=None, teacher_pred_aux=None
-    ):
-        """
-        Computes the consistency loss between student and teacher predictions.
-
-        Args:
-            student_pred (torch.Tensor): Predictions from the student model.
-            teacher_pred (torch.Tensor): Predictions from the teacher model.
-            step (int, optional): Current step. Defaults to 1.
-            student_pred_aux (None or list of torch.Tensor, optional): Auxiliary predictions
-                from the student model. Defaults to None.
-            teacher_pred_aux (None or list of torch.Tensor, optional): Auxiliary predictions
-                from the teacher model. Defaults to None.
-
-        Returns:
-            torch.Tensor: Consistency loss.
-
-        """
-        w = self.get_consistency_weight(step)
-
-        student_pred = student_pred.softmax(-1)
-        teacher_pred = teacher_pred.softmax(-1).detach().data
-        loss = ((student_pred - teacher_pred) ** 2).sum(-1).mean()
-
-        if not self.aux_loss_weight > 0:
-            return w * loss.mean()
-
-        w_aux_tot = 0
-        loss_aux_tot = 0
-        if isinstance(student_pred_aux, list):
-            assert isinstance(teacher_pred_aux, list)
-
-            for layer, (sp, tp) in enumerate(zip(student_pred_aux, teacher_pred_aux)):
-                sp = sp.softmax(-1)
-                tp = tp.softmax(-1).detach().data
-                loss_aux = ((sp - tp) ** 2).sum(-1)
-
-                loss_aux_tot += (self.aux_loss_weight * (layer + 1)) * loss_aux.mean()
-                w_aux_tot += (self.aux_loss_weight * (layer + 1))
-
-        return w * ((1 - w_aux_tot) * loss + w_aux_tot * loss_aux_tot)
-
-
 class SmoothCrossEntropyLoss(nn.Module):
     """
     Cross-entropy loss with label smoothing.
@@ -157,7 +52,7 @@ class SmoothCrossEntropyLoss(nn.Module):
         return loss
 
 
-class SignLoss(nn.Module):
+class ClsLoss(nn.Module):
     """
     Loss wrapper for the problem.
 

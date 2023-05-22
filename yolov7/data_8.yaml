@@ -1,0 +1,1 @@
+{names: [chart, text, tick, point], nc: 4, train: ../input//v8/images/train/, val: ../input//v8/images/valid/}

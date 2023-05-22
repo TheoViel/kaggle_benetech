@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler, BatchSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 
-from utils.torch import worker_init_fn
+from util.torch import worker_init_fn
 from params import NUM_WORKERS
 
 

@@ -9,10 +9,11 @@ from torch.nn.parallel import DistributedDataParallel
 from training.train import fit
 from model_zoo.models import define_model
 
-from data.dataset import SignDataset
+from data.dataset import ClsDataset
+from data.transforms import get_transfos
 
-from utils.torch import seed_everything, count_parameters, save_model_weights
-from utils.metrics import accuracy
+from util.torch import seed_everything, count_parameters, save_model_weights
+from util.metrics import accuracy
 
 
 def train(config, df_train, df_val, fold, log_folder=None, run=None):
@@ -30,27 +31,16 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
     Returns:
         np array [len(df_val) x num_classes]: Validation predictions.
     """
-    if config.local_rank == 0:
-        print("    -> Data Preparation")
-    train_dataset = SignDataset(
+    train_dataset = ClsDataset(
         df_train,
-        max_len=config.max_len,
-        aug_strength=config.aug_strength,
-        resize_mode=config.resize_mode,
-        train=True,
-        dist=config.mt_config['distill'],
+        transforms=get_transfos(resize=config.resize, strength=config.aug_strength),
+
     )
 
-    val_dataset = SignDataset(
+    val_dataset = ClsDataset(
         df_val,
-        max_len=config.max_len,
-        resize_mode=config.resize_mode,
-        train=False,
+        transforms=get_transfos(augment=False, resize=config.resize),
     )
-
-    if config.epochs > 10:
-        train_dataset.fill_buffer()
-        val_dataset.fill_buffer()
 
     if config.pretrained_weights is not None:
         if config.pretrained_weights.endswith(
@@ -66,53 +56,16 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
 
     model = define_model(
         config.name,
-        pretrained_weights=pretrained_weights,
-        embed_dim=config.embed_dim,
-        transfo_dim=config.transfo_dim,
-        dense_dim=config.dense_dim,
-        transfo_heads=config.transfo_heads,
-        transfo_layers=config.transfo_layers,
-        drop_rate=config.drop_rate,
         num_classes=config.num_classes,
         num_classes_aux=config.num_classes_aux,
-        n_landmarks=config.n_landmarks,
-        max_len=config.max_len,
-        verbose=(config.local_rank == 0),
-    ).cuda()
-
-    model_teacher = define_model(
-        config.name,
+        n_channels=config.n_channels,
         pretrained_weights=pretrained_weights,
-        embed_dim=config.embed_dim,
-        transfo_dim=config.transfo_dim,
-        dense_dim=config.dense_dim,
-        transfo_heads=config.transfo_heads,
-        transfo_layers=config.transfo_layers,
         drop_rate=config.drop_rate,
-        num_classes=config.num_classes,
-        num_classes_aux=config.num_classes_aux,
-        n_landmarks=config.n_landmarks,
-        max_len=config.max_len,
+        drop_path_rate=config.drop_path_rate,
+        use_gem=config.use_gem,
+        reduce_stride=config.reduce_stride,
         verbose=(config.local_rank == 0),
     ).cuda()
-
-    model_distilled = None
-    if config.mt_config['distill']:
-        model_distilled = define_model(
-            config.name,
-            pretrained_weights=pretrained_weights,
-            embed_dim=config.embed_dim,
-            transfo_dim=config.mt_config['distill_transfo_dim'],
-            dense_dim=config.mt_config['distill_dense_dim'],
-            transfo_heads=config.transfo_heads,
-            transfo_layers=config.mt_config['distill_transfo_layers'],
-            drop_rate=config.drop_rate,
-            num_classes=config.num_classes,
-            num_classes_aux=config.num_classes_aux,
-            n_landmarks=config.n_landmarks,
-            max_len=config.max_len,
-            verbose=0,
-        ).cuda()
 
     if config.distributed:
         if config.syncbn:
@@ -125,14 +78,6 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
             broadcast_buffers=config.syncbn,
         )
 
-        if model_distilled is not None:
-            model_distilled = DistributedDataParallel(
-                model_distilled,
-                device_ids=[config.local_rank],
-                find_unused_parameters=False,
-                broadcast_buffers=config.syncbn,
-            )
-
 #     try:
 #         model = torch.compile(model, mode="reduce-overhead")
 #         if config.local_rank == 0:
@@ -143,37 +88,22 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
     model.zero_grad(set_to_none=True)
     model.train()
 
-    if model_distilled is not None:
-        model_distilled.zero_grad(set_to_none=True)
-        model_distilled.train()
-
-    for param in model_teacher.parameters():
-        param.detach_()
-
     n_parameters = count_parameters(model)
     if config.local_rank == 0:
         print(f"    -> {len(train_dataset)} training images")
         print(f"    -> {len(val_dataset)} validation images")
-        print(f"    -> {n_parameters} trainable parameters")
-        if model_distilled is not None:
-            dist_parameters = count_parameters(model_distilled)
-            print(f"    -> {dist_parameters} distilled parameters\n")
-        else:
-            print("")
+        print(f"    -> {n_parameters} trainable parameters\n")
+
 
     pred_val = fit(
         model,
-        model_teacher,
-        model_distilled,
         train_dataset,
         val_dataset,
         config.data_config,
         config.loss_config,
         config.optimizer_config,
-        config.mt_config,
         epochs=config.epochs,
         verbose_eval=config.verbose_eval,
-        model_soup=config.model_soup,
         use_fp16=config.use_fp16,
         distributed=config.distributed,
         local_rank=config.local_rank,
@@ -211,59 +141,32 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
     Returns:
         np array [len(df) x num_classes]: Oof predictions.
     """
-    if "fold" not in df.columns:
-        folds = pd.read_csv(config.folds_file)
-        df = df.merge(folds, how="left", on=["participant_id", "sequence_id"])
+    
+    df_train = df[df['split'] == "train"].reset_index(drop=True)
+    df_val = df[df['split'] != "train"].reset_index(drop=True)
 
-    pred_oof = np.zeros((len(df), config.num_classes))
-    for fold in range(config.k):
-        if fold in config.selected_folds:
-            if config.local_rank == 0:
-                print(
-                    f"\n-------------   Fold {fold + 1} / {config.k}  -------------\n"
-                )
+    if config.local_rank == 0:
+        print(
+            f"\n-------------   Train / Val Split  -------------\n"
+        )
 
-            seed_everything(
-                int(re.sub(r"\W", "", config.name), base=36) % 2**31 + fold
-            )
-            train_idx = list(df[df["fold"] != fold].index)
-            val_idx = list(df[df["fold"] == fold].index)
+    seed_everything(int(re.sub(r"\W", "", config.name), base=36) % 2**31)
 
-            df_train = df.iloc[train_idx].reset_index(drop=True)
-            df_val = df.iloc[val_idx].reset_index(drop=True)
+    pred_val = train(
+        config, df_train, df_val, 0, log_folder=log_folder, run=run
+    )
 
-            if df_extra is not None:
-                df_train = pd.concat([df_train, df_extra], ignore_index=True)
-
-            pred_val = train(
-                config, df_train, df_val, fold, log_folder=log_folder, run=run
-            )
-
-            if log_folder is None:
-                return pred_val
-
-            if config.local_rank == 0:
-                np.save(log_folder + f"pred_val_{fold}", pred_val)
-                df_val.to_csv(log_folder + f"df_val_{fold}.csv", index=False)
-                pred_oof[val_idx] = pred_val
-
-                if run is not None:
-                    run[f"fold_{fold}/pred_val"].upload(
-                        log_folder + f"df_val_{fold}.csv"
-                    )
-
-    if config.selected_folds == list(range(config.k)) and (config.local_rank == 0):
-        acc = accuracy(df["target"].values, pred_oof)
+    if config.local_rank == 0:
+        acc = accuracy(df_val["target"].values, pred_val)
         print(f"\n\n -> CV Accuracy : {acc:.4f}")
 
         if log_folder is not None:
-            folds.to_csv(log_folder + "folds.csv", index=False)
-            np.save(log_folder + "pred_oof.npy", pred_oof)
-            df.to_csv(log_folder + "df.csv", index=False)
+            np.save(log_folder + "pred_val", pred_val)
+            df_val.to_csv(log_folder + "df_val.csv", index=False)
 
             if run is not None:
                 run["global/logs"].upload(log_folder + "logs.txt")
-                run["global/pred_oof"].upload(log_folder + "pred_oof.npy")
+                run["global/pred_val"].upload(log_folder + "pred_val.npy")
                 run["global/cv"] = acc
 
     if config.fullfit:
@@ -289,4 +192,4 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
         print()
         run.stop()
 
-    return pred_oof
+    return pred_val
