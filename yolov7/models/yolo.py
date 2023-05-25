@@ -307,6 +307,67 @@ class IKeypoint(nn.Module):
         yv, xv = torch.meshgrid([torch.arange(ny), torch.arange(nx)])
         return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
 
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class CustomAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, batch_first=True):
+        super().__init__()
+        self.d = dim 
+        self.num_heads = num_heads
+        self.mha = nn.MultiheadAttention(
+            dim,
+            num_heads=num_heads,
+            bias=True,
+            add_bias_kv=False,
+            kdim=None,
+            vdim=None,
+            dropout=0.0,
+            batch_first=batch_first,
+        )
+    #https://github.com/pytorch/text/blob/60907bf3394a97eb45056a237ca0d647a6e03216/torchtext/modules/multiheadattention.py#L5
+    def forward(self, x, q):
+        bs, sz, _ = x.size()
+
+        q = F.linear(q, self.mha.in_proj_weight[:self.d], self.mha.in_proj_bias[:self.d])
+        k = F.linear(x, self.mha.in_proj_weight[self.d: self.d * 2], self.mha.in_proj_bias[self.d: self.d * 2])
+        v = F.linear(x, self.mha.in_proj_weight[self.d * 2:], self.mha.in_proj_bias[self.d * 2:]) 
+
+        q = q.reshape(-1, self.num_heads, self.d // self.num_heads).permute(1, 0, 2)
+        k = k.reshape(-1, self.num_heads, self.d // self.num_heads).permute(1, 2, 0)
+        v = v.reshape(-1, self.num_heads, self.d // self.num_heads).permute(1, 0, 2)
+        
+        dot  = torch.matmul(q, k) * (1 / (self.d // self.num_heads) ** 0.5) # bs*n_heads x q x sz
+        attn = dot.mean(1).sigmoid().unsqueeze(-1)  # bs*n_heads x size x 1
+
+        out = v * attn
+        out = out.contiguous().view(bs, self.num_heads, sz, -1).permute(0, 2, 1, 3).contiguous().view(bs, sz, -1)  # bs x q x sz*n_heads
+
+        out  = F.linear(out, self.mha.out_proj.weight, self.mha.out_proj.bias)  
+        return out
+
+
+class CustomCorr(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.d = dim 
+        self.dense_q = nn.Linear(dim, dim)
+        self.dense_x = nn.Linear(dim, dim)
+        self.dense_qx = nn.Linear(dim, dim)
+
+    #https://github.com/pytorch/text/blob/60907bf3394a97eb45056a237ca0d647a6e03216/torchtext/modules/multiheadattention.py#L5
+    def forward(self, x, q):
+#         bs, sz, _ = x.size()
+        q = self.dense_q(q)
+        q = q.mean(1, keepdims=True)
+#         print(q.size())
+        x = self.dense_x(x)
+
+#         print(q.abs().mean(), x.abs().mean())
+#         print(x.size())
+        return self.dense_qx(x + q)
+
 
 class IAuxDetect(nn.Module):
     stride = None  # strides computed during build
@@ -330,27 +391,34 @@ class IAuxDetect(nn.Module):
         
         self.ia = nn.ModuleList(ImplicitA(x) for x in ch[:self.nl])
         self.im = nn.ModuleList(ImplicitM(self.no * self.na) for _ in ch[:self.nl])
+        
+#         print("Adding custom attention layers\n")
+#         print(ch)
+#         self.atts = nn.ModuleList(CustomAttention(dim) for dim in ch[:self.nl])
+#         self.atts = nn.ModuleList(CustomCorr(dim) for dim in ch[:self.nl])
 
     def forward(self, x):
-        # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
+
+        if hasattr(self, "atts"):
+            top_fts, scores = self.retrieve_top_k(x, k=5)
+            x[:4] = self.correlation_forward(x[:4], top_fts)
+
+        # TODO : What happends to the last indices of x ? Only used in the loss ?
         for i in range(self.nl):
             x[i] = self.m[i](self.ia[i](x[i]))  # conv
             x[i] = self.im[i](x[i])
-            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+            bs, _, ny, nx = x[i].shape  # bs, 3 x (nc + 5), h, w -> bs, 3, h, w, nc + 5
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-            
-            x[i+self.nl] = self.m2[i](x[i+self.nl])
-            x[i+self.nl] = x[i+self.nl].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-
+        
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
                     self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
 
                 y = x[i].sigmoid()
                 if not torch.onnx.is_in_onnx_export():
-                    y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
+                    y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i].to(y.device)) * self.stride[i].to(y.device)  # xy
                     y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
                 else:
                     xy, wh, conf = y.split((2, 2, self.nc + 1), 4)  # y.tensor_split((2, 4, 5), 4)  # torch 1.8.0
@@ -358,8 +426,49 @@ class IAuxDetect(nn.Module):
                     wh = wh ** 2 * (4 * self.anchor_grid[i].data)  # new wh
                     y = torch.cat((xy, wh, conf), 4)
                 z.append(y.view(bs, -1, self.no))
+            else:
+                x[i+self.nl] = self.m2[i](x[i+self.nl])
+                x[i+self.nl] = x[i+self.nl].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
         return x if self.training else (torch.cat(z, 1), x[:self.nl])
+    
+    def correlation_forward(self, fts, top_fts):
+        outs = []
+        for i, (ft, top_ft) in enumerate(zip(fts, top_fts)):
+#             print(ft.size())
+            bs, ft_dim, h, w  = ft.size()
+            ft_ = ft.view(bs, ft_dim, h * w).permute(0, 2, 1).contiguous()
+            out = self.atts[i](ft_, top_ft)
+            out = out.permute(0, 2, 1).contiguous().view(bs, ft_dim, h, w)
+#             print(out.mean())
+#             out = out + ft
+            outs.append(out)
+        return outs
+
+    def retrieve_top_k(self, fts, k=5, class_idx=-1):
+        scores, top_fts = [], []
+        self.training |= self.export
+        
+        for i in range(self.nl):
+#             print(fts[i].size())
+            x = self.m[i](self.ia[i](fts[i]))  # conv
+            x = self.im[i](x)
+            bs, _, ny, nx = x.shape  # bs, 3 x (nc + 5), h, w -> bs, 3, h, w, 4 + 1 + nc
+            x = x.view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            
+#             print(x.size())
+            
+            score = x[..., 4].sigmoid().amax(1).view(bs, -1)
+#             score = x[..., 5:][..., class_idx].sigmoid().amax(1).view(bs, -1) * objectness
+
+            top_k = torch.topk(score, k, dim=1)
+            scores.append(top_k.values)
+            
+            top_ft = fts[i].view(bs, fts[i].size(1), -1).permute(0, 2, 1).contiguous()
+            top_ft = top_ft.gather(1, top_k.indices.unsqueeze(-1).expand(bs, k, top_ft.size(-1)))
+            top_fts.append(top_ft)
+
+        return top_fts, scores
 
     def fuseforward(self, x):
         # x = x.copy()  # for profiling
@@ -367,7 +476,8 @@ class IAuxDetect(nn.Module):
         self.training |= self.export
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
-            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+
+            bs, _, ny, nx = x[i].shape  # bs, 3 x (nc + 5), h, w -> bs, 3, h, w, nc + 5
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
@@ -578,7 +688,7 @@ class Model(nn.Module):
         self.info()
         logger.info('')
 
-    def forward(self, x, augment=False, profile=False):
+    def forward(self, x, augment=False, profile=False, return_fts=False):
         if augment:
             img_size = x.shape[-2:]  # height, width
             s = [1, 0.83, 0.67]  # scales
@@ -596,11 +706,17 @@ class Model(nn.Module):
                 y.append(yi)
             return torch.cat(y, 1), None  # augmented inference, train
         else:
-            return self.forward_once(x, profile)  # single-scale inference, train
+            return self.forward_once(x, profile, return_fts=return_fts)  # single-scale inference, train
 
-    def forward_once(self, x, profile=False):
+    def forward_once(self, x, profile=False, return_fts=False):
         y, dt = [], []  # outputs
-        for m in self.model:
+        fts = []
+#         try:
+#             print(x.size())
+#         except:
+#             print(x[0].size())
+
+        for m_idx, m in enumerate(self.model):
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
 
@@ -622,13 +738,32 @@ class Model(nn.Module):
                 dt.append((time_synchronized() - t) * 100)
                 print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
 
+#             try:
+#                 print(m_idx, x.size())
+#             except:
+#                 pass
+            if m_idx in [2, 11, 20]:  # , 20, 29, 38, 47]:
+                fts.append(x.clone())
+                
+#             if isinstance(m, IAuxDetect):
+#                 fts = [torch.clone(x_).view(x_.size(0), x_.size(1), -1).transpose(1, 2) for x_ in x]
+            
             x = m(x)  # run
+        
+#             try:
+#                 print(m_idx, x.size())
+#             except:
+#                 print([x_.size() for x_ in x])
             
             y.append(x if m.i in self.save else None)  # save output
-
+            
         if profile:
             print('%.1fms total' % sum(dt))
-        return x
+            
+        if return_fts:
+            return x, fts
+        else:
+            return x
 
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
         # https://arxiv.org/abs/1708.02002 section 3.3
@@ -703,9 +838,9 @@ class Model(nn.Module):
                 m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
                 delattr(m, 'bn')  # remove batchnorm
                 m.forward = m.fuseforward  # update forward
-            elif isinstance(m, (IDetect, IAuxDetect)):
-                m.fuse()
-                m.forward = m.fuseforward
+#             elif isinstance(m, (IDetect, IAuxDetect)):
+#                 m.fuse()
+#                 m.forward = m.fuseforward
         self.info()
         return self
 

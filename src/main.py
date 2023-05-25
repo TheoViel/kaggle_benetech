@@ -59,12 +59,6 @@ def parse_args():
         default=0,
         help="Batch size",
     )
-    parser.add_argument(
-        "--mt-ema-decay",
-        type=float,
-        default=0,
-        help="Mean teacher EMA decay",
-    )
     return parser.parse_args()
 
 
@@ -90,7 +84,7 @@ class Config:
     selected_folds = [0]
 
     # Model
-    name = "tf_efficientnetv2_b3"  # "eca_nfnet_l2"  # "tf_efficientnetv2_s" "eca_nfnet_l1"
+    name = "eca_nfnet_l2"  # "eca_nfnet_l2"  # "tf_efficientnetv2_s" "eca_nfnet_l1"
     pretrained_weights = None
     num_classes = len(CLASSES)
     num_classes_aux = 0
@@ -130,7 +124,7 @@ class Config:
         "weight_decay": 0,  # 1e-2,
     }
 
-    epochs = 3
+    epochs = 2
     use_fp16 = True
 
     verbose = 1
@@ -172,9 +166,6 @@ if __name__ == "__main__":
 
     if args.lr:
         config.optimizer_config["lr"] = args.lr
-        
-    if args.mt_ema_decay:
-        config.mt_config["ema_decay"] = args.mt_ema_decay
 
     if args.batch_size:
         config.data_config["batch_size"] = args.batch_size

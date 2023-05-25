@@ -801,6 +801,7 @@ def box_diou(box1, box2, eps: float = 1e-7):
 
 
 def non_max_suppression(prediction,
+                        ids=None,
                         conf_thres=0.25,
                         iou_thres=0.45,
                         classes=None,
@@ -824,21 +825,22 @@ def non_max_suppression(prediction,
     nc = prediction.shape[2] - 5  # number of classes
     
     conf_thresh = np.min(conf_thres) if isinstance(conf_thres, list) else conf_thres
-    
+
 #     print(prediction.shape)
 #     print(prediction[0, 0])
+    if ids is not None:
+#         assert bs == 1, "use bs=1"
+        prediction = torch.cat([prediction, ids.to(prediction.device)], -1)
+
     xc = prediction[..., 4] > conf_thresh  # candidates
-    
+
 #     print(xc.shape)
 #     print(xc[0, 0])
 
     if min_det:
+        raise NotImplementedError('TODO')
         for i in range(xc.size(0)):
-            xc[i] += (prediction[i, ..., 4] > prediction[i, ..., 4].topk(min_det * 10)[0][-1])
-            # Last class
-            xc[i] += (prediction[i, ..., -1] > prediction[i, ..., -1].topk(min_det * 10)[0][-1])
-            
-#             assert xc[i]
+            xc[i] += prediction[i, ..., 4] > prediction[i, ..., 4].topk(min_det)[0]
 
     # print(xc.sum(-1))
     # print(xc.size())
@@ -858,14 +860,11 @@ def non_max_suppression(prediction,
     merge = False  # use merge-NMS
 
     t = time.time()
-    output = [torch.zeros((0, 6), device=prediction.device)] * bs
+    output = [torch.zeros((0, 7), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
-        
-#         print(x.shape)
-#         print(x[0])
 
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]):
@@ -881,22 +880,35 @@ def non_max_suppression(prediction,
             continue
 
         # Compute conf
-        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+        if ids is not None:
+            x[:, 5:-1] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+        else:
+            x[:, 5:] *= x[:, 4:5]
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
 
         # Detections matrix nx6 (xyxy, conf, cls)
         # print(x.size())
+        if min_det:
+            raise NotImplementedError('Min det not implemented')
+            conf_thres_ = min(x[:, 5].topk(min_det)[0], conf_thres)
+        else:
+            conf_thres_ = conf_thresh
 
         if multi_label:
-            assert not min_det
+#             raise NotImplementedError('Multilabel not implemented')
             i, j = (x[:, 5:] > conf_thres_).nonzero(as_tuple=False).T
             x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
-            conf, j = x[:, 5:].max(1, keepdim=True)  # class proba, class
+            if ids is not None:
+                conf, j = x[:, 5:-1].max(1, keepdim=True)  # class proba, class
+                x = torch.cat((box, conf, j.float(), x[:, 4:5], x[:, -1:]), 1)  # [conf.view(-1) > conf_thres_]
+            else:
+                conf, j = x[:, 5:].max(1, keepdim=True)
+                x = torch.cat((box, conf, j.float(), x[:, 4:5]), 1)  # [conf.view(-1) > conf_thres_]
 #             conf *= x[:, 4:5]  # detection conf
-            x = torch.cat((box, conf, j.float(), x[:, 4:5]), 1)  # [conf.view(-1) > conf_thres_]
+                
 
         # Filter by class
         if classes is not None:
@@ -919,39 +931,21 @@ def non_max_suppression(prediction,
             c = x[:, 5:6]
             xs = []
             for c_ in range(nc):
-                
                 iou_thresh = iou_thres[c_] if isinstance(iou_thres, list) else iou_thres
                 conf_thresh = conf_thres[c_] if isinstance(conf_thres, list) else conf_thres
-            
-                ids = torch.where(c == c_)
                 
+                ids = torch.where(c == c_)
                 x_ = x[(c == c_).view(-1)]
                 
                 # Confidence per class
-            
-                if min_det and c_ == (nc - 1):  # only for markers for now
-        #             raise NotImplementedError('Min det not implemented')
-#                     print(x.size())
-#                     print(x[:, 4].topk(min_det)[0][-1])
-                    conf_thresh_1 = min(x_[:, 4].topk(min_det)[0][-1], conf_thresh)
-                    conf_thresh_2 = min(x_[:, 6].topk(min_det)[0][-1], conf_thresh)
-                    
-                    if conf_thresh != conf_thresh_1 or conf_thresh_2 != conf_thresh:
-                        print("Adjusted thresh", conf_thresh, conf_thresh_1, conf_thresh_2)
-                else:
-                    conf_thresh_1 = conf_thresh
-                    conf_thresh_2 = conf_thresh
-                    
-                x_ = x_[x_[:, 4] >= conf_thresh_1]
-                x_ = x_[x_[:, 6] >= conf_thresh_2]
-                
-                if min_det:
-                    assert len(x_) >= min_det, f"Not enough dets : {len(x_)}"
+                x_ = x_[x_[:, 4] > conf_thresh]
+                x_ = x_[x_[:, 6] > conf_thresh]
                 
                 boxes, scores = x_[:, :4], x_[:, 4]
                 i = torchvision.ops.nms(boxes, scores, iou_thresh)  # NMS
-                if i.shape[0] > max_det:  # limit detections
-                    i = i[:max_det]
+                if max_det is not None:
+                    if i.shape[0] > max_det:  # limit detections
+                        i = i[:max_det]
                     
                 if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
                     # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
@@ -960,10 +954,8 @@ def non_max_suppression(prediction,
                     x_[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
                     if redundant:
                         i = i[iou.sum(1) > 1]  # require redundancy
-                        
-#                 print(len(x_[i]))
                 xs.append(x_[i])
-            
+
             output[xi] = torch.cat(xs, 0)
             
         else:
@@ -987,6 +979,8 @@ def non_max_suppression(prediction,
                 print(f'WARNING: NMS time limit {time_limit:.3f}s exceeded')
                 break  # time limit exceeded
 
+#     print(output[0].size())
+#     print(output[0][:, -1])
     return output
 
 

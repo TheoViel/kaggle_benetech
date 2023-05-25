@@ -16,6 +16,8 @@ def prepare_data(data_path="../input/", img_folder="train/images/"):
     
     df['target'] = df['chart-type'].apply(lambda x: CLASSES.index(x))
     
+    df.loc[df["source"] == "extracted", "split"] = "val"
+    
     return df
 
 

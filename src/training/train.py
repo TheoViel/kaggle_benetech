@@ -259,7 +259,7 @@ def fit(
                     s = f"Epoch {epoch:02d}/{epochs:02d} (step {step_:04d}) \t"
                     s = s + f"lr={lr:.1e} \t t={dt:.0f}s  \t loss={avg_loss:.3f}"
                     s = s + f"\t val_loss={avg_val_loss:.3f}" if avg_val_loss else s
-                    s = s + f"    acc={acc:.3f}" if acc else s
+                    s = s + f"    acc={acc:.4f}" if acc else s
 
                     print(s)
 

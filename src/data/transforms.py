@@ -36,6 +36,7 @@ def color_transforms(p=0.5):
                 brightness_limit=0.1, contrast_limit=0.2, always_apply=True
             ),
             albu.ChannelShuffle(always_apply=True),
+            albu.ToGray(always_apply=True),
 #             albu.HueSaturationValue(always_apply=True),<
         ],
         p=p,

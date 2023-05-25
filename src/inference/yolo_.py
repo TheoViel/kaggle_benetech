@@ -115,10 +115,7 @@ def predict(model, dataset, config):
 
     Returns:
         DetectionMeter: Meter containing predictions.
-        TODO
     """
-    model.eval()
-    
     loader = DataLoader(
         dataset,
         batch_size=config.val_bs,
@@ -129,47 +126,19 @@ def predict(model, dataset, config):
     )
 
     meter = DetectionMeter(pred_format=config.pred_format, truth_format=config.bbox_format)
-    meter.reset()
 
-    fts_list = []
+    meter.reset()
+    model.eval()
+
     with torch.no_grad():
         for batch in loader:
             x = batch[0].to(config.device)
-
+            
 #             print(x.mean())
-            pred_boxes, fts = model(x)
+            pred_boxes = model(x)
             meter.update(batch[1], pred_boxes, x.size())
-        
-#             print(len(fts), len(fts[0]))
-            if len(fts) > 1: # several fts
-                if not len(fts_list):
-                    fts_list = [[ft] for ft in fts]
-                else:
-                    for i in range(len(fts)):
-                        fts_list[i].append(fts[i])
-            else:
-                fts_list += fts
-    
-    if len(fts) > 1:
-        fts_list = [torch.cat(fts).cpu() for fts in fts_list]
-#         fts_list = [np.concatenate(fts) for fts in fts_list]
-    return meter, fts_list
 
-
-def custom_cat(fts):
-    assert all([len(ft.size()) == 3 for ft in fts])
-
-    dim = np.max([ft.size(-1) for ft in fts])
-    n = np.sum([ft.size(1) for ft in fts])
-
-    cat = torch.zeros((fts[0].size(0), n, dim))
-    where = - torch.ones((fts[0].size(0), n, dim))
-
-    current = 0
-    for i, ft in enumerate(fts):
-        cat[:, current: current + ft.size(1), :ft.size(2)] = ft
-        where[:, current: current + ft.size(1), :ft.size(2)] = i
-    return cat.cpu(), where.cpu()
+    return meter
 
 
 class YoloWrapper(nn.Module):
@@ -188,6 +157,7 @@ class YoloWrapper(nn.Module):
         max_per_img (int): Maximum number of detections per image.
         min_per_img (int): Minimum number of detections per image.
     """
+
     def __init__(self, model, config):
         """
         Constructor
@@ -215,39 +185,22 @@ class YoloWrapper(nn.Module):
         Returns:
             torch tensor: Predictions.
         """
-        pred_boxes, fts = self.model(x, return_fts=True)
-#         fts = fts[0]  # first layer
-
-#         fts, where = custom_cat(fts)
-
-        bs, n, _ = pred_boxes[0].size()
-        ids = torch.arange(n).view(1, -1, 1).expand(bs, n, 1).contiguous()
-
-#         print(len(fts), fts[0].size())
-#         print(fts.size(), pred_boxes[0].size())
-#         print(np.argsort(pred_boxes[0][0, :, 4].cpu().numpy())[::-1][:3])
+        pred_boxes, _ = self.model(x)
+#         print(pred_boxes.size())
 
         pred_boxes = self.non_max_suppression(
             pred_boxes,
-#             ids=ids,
             multi_label=False,
             conf_thres=self.conf_thresh,
             iou_thres=self.iou_thresh,
             max_det=self.max_per_img,
             min_det=self.min_per_img,
-        ) 
-        # Division by 3 accounts for ratios
-        pred_boxes, ids = [p[:, :-1].cpu() for p in pred_boxes], [p[:, -1].cpu().long() // 3 for p in pred_boxes]
+        )
 
-#         filtered_fts = []
-#         for ft, w, id_ in zip(fts, where, ids):
-#             filtered_ft = ft[id_]
-#             filtered_w = w[id_]
-#             filtered_fts.append(
-#                 [ff[: (fw >= 0).sum()].cpu().numpy() for ff, fw in zip(filtered_ft, filtered_w)]
-#             )
+#         for p in pred_boxes:
+#             print(p.mean())
 
-        return pred_boxes, fts
+        return pred_boxes
 
 
 def retrieve_model(config, model=None):
