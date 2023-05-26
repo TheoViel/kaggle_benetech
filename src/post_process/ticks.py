@@ -50,6 +50,23 @@ def assign(ticks, labels, tol=2, mode="x"):
         if cost_matrix[tick_idx, label_idx] < max(tol * 5, tol * np.min(cost_matrix)):
             ticks_assigned.append(ticks[tick_idx])
             labels_assigned.append(labels[label_idx])
+            
+    # Fix outlier too close
+    if len(ticks_assigned) <= 3:
+        error_value = np.min(cost_matrix)
+        cost_matrix = np.where(cost_matrix < error_value * 2, 100000, cost_matrix)
+
+        ticks_assigned_fixed, labels_assigned_fixed = [], []
+        for tick_idx, label_idx in zip(row_ind, col_ind):
+            #         print(cost_matrix[tick_idx, label_idx])
+            if cost_matrix[tick_idx, label_idx] < max(tol * 5, tol * np.min(cost_matrix)):
+                ticks_assigned_fixed.append(ticks[tick_idx])
+                labels_assigned_fixed.append(labels[label_idx])
+                
+        if len(ticks_assigned) < len(ticks_assigned_fixed):
+#             print('Fixed ticks', mode)
+            ticks_assigned = ticks_assigned_fixed
+            labels_assigned = labels_assigned_fixed
 
     return np.array(ticks_assigned), np.array(labels_assigned)
 

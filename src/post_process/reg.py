@@ -26,7 +26,7 @@ def linear_regression(ticks, values, errors, points, mode="x", verbose=0):
     if verbose:
         print("Correlations before pp", corr, corr_rank)
 
-    outliers = find_outliers(x_train, values, verbose=verbose)
+    outliers = find_outliers(x_train, values, verbose=verbose, corr="pearson")
     x_train = np.array([x for j, x in enumerate(x_train) if j not in outliers])
     values = np.array([v for j, v in enumerate(values) if j not in outliers])
 

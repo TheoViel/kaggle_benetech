@@ -67,7 +67,8 @@ def post_process_texts(texts):
         # Handle .,
         if "," in t or "." in t:
             t = re.sub(",", ".", t)
-            if all([len(char) == 3 for char in t.split(".")][1:]):
+            if all([(len(char) == 3 and "00" in char) for char in t.split(".")][1:]):
+#             if len(t.split('.')) > 2:
                 #                 print('rep .')
                 t = re.sub(r"\.", "", t)
 
@@ -82,4 +83,9 @@ def post_process_texts(texts):
             errors.append(i)
 
     assert len(values) + len(errors) == len(texts)
+    
+    # Fix percentages
+    if all([t.endswith("96") or t.endswith("95") for t in texts]):
+        values = [float(t[:-2]) for t in texts]
+
     return np.array(values), errors

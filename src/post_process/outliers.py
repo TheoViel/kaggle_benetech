@@ -5,8 +5,8 @@ from scipy.stats import spearmanr, pearsonr
 def find_outliers(x_train, values, verbose=0, corr="spearman", th=0.99):
     corr_fct = spearmanr if corr == "spearman" else pearsonr
 
-    corr_rank = np.abs(corr_fct(x_train, values).statistic)
-    if corr_rank > th:
+    corr_start = np.abs(corr_fct(x_train, values).statistic)
+    if corr_start > th:
         return []
 
     # One outlier
@@ -14,9 +14,9 @@ def find_outliers(x_train, values, verbose=0, corr="spearman", th=0.99):
         for i in range(len(x_train)):
             x_train_ = [x for j, x in enumerate(x_train) if j != i]
             values_ = [v for j, v in enumerate(values) if j != i]
-            corr_rank = np.abs(corr_fct(x_train_, values_).statistic)
+            corr = np.abs(corr_fct(x_train_, values_).statistic)
 
-            if corr_rank > th:
+            if corr > th:
                 if verbose:
                     print(f"Remove {i}")
                 return [i]
@@ -27,9 +27,9 @@ def find_outliers(x_train, values, verbose=0, corr="spearman", th=0.99):
             for i2 in range(i):
                 x_train_ = [x for j, x in enumerate(x_train) if (j != i and j != i2)]
                 values_ = [v for j, v in enumerate(values) if (j != i and j != i2)]
-                corr_rank = np.abs(corr_fct(x_train_, values_).statistic)
+                corr = np.abs(corr_fct(x_train_, values_).statistic)
 
-                if corr_rank > th:
+                if corr > th:
                     if verbose:
                         print(f"Remove {i}, {i2}")
                     return [i, i2]

@@ -1,13 +1,15 @@
+import gc
 import sys
 import cv2
 import torch
 import numpy as np
 import torch.nn as nn
 import albumentations as albu
+
+from tqdm import tqdm
 from albumentations import pytorch as AT
 from torch.utils.data import Dataset, DataLoader
 
-# from tracking.meter import DetectionMeter
 from util.boxes import Boxes
 
 
@@ -104,7 +106,7 @@ def collate_fn_val_yolo(batch):
     return torch.stack(list(img), 0), boxes, shapes
 
 
-def predict(model, dataset, config):
+def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
     """
     Predict function.
 
@@ -133,26 +135,27 @@ def predict(model, dataset, config):
 
     fts_list = []
     with torch.no_grad():
-        for batch in loader:
+        for batch in tqdm(loader, disable=disable_tqdm):
             x = batch[0].to(config.device)
 
-#             print(x.mean())
             pred_boxes, fts = model(x)
             meter.update(batch[1], pred_boxes, x.size())
-        
-#             print(len(fts), len(fts[0]))
-            if len(fts) > 1: # several fts
-                if not len(fts_list):
-                    fts_list = [[ft] for ft in fts]
+
+            if extract_fts:
+                if len(fts) > 1: # several fts
+                    if not len(fts_list):
+                        fts_list = [[ft] for ft in fts]
+                    else:
+                        for i in range(len(fts)):
+                            fts_list[i].append(fts[i])
                 else:
-                    for i in range(len(fts)):
-                        fts_list[i].append(fts[i])
-            else:
-                fts_list += fts
+                    fts_list += fts
     
-    if len(fts) > 1:
-        fts_list = [torch.cat(fts).cpu() for fts in fts_list]
-#         fts_list = [np.concatenate(fts) for fts in fts_list]
+    if len(fts) > 1 and extract_fts:
+        fts_list = [torch.cat(fts) for fts in fts_list]
+
+    gc.collect()
+    torch.cuda.empty_cache()
     return meter, fts_list
 
 

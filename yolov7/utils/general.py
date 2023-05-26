@@ -891,7 +891,7 @@ def non_max_suppression(prediction,
 
         if multi_label:
             assert not min_det
-            i, j = (x[:, 5:] > conf_thres_).nonzero(as_tuple=False).T
+            i, j = (x[:, 5:] > conf_thresh).nonzero(as_tuple=False).T
             x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)  # class proba, class
@@ -945,8 +945,8 @@ def non_max_suppression(prediction,
                 x_ = x_[x_[:, 4] >= conf_thresh_1]
                 x_ = x_[x_[:, 6] >= conf_thresh_2]
                 
-                if min_det:
-                    assert len(x_) >= min_det, f"Not enough dets : {len(x_)}"
+#                 if min_det:
+#                     assert len(x_) >= min_det, f"Not enough dets : {len(x_)}"
                 
                 boxes, scores = x_[:, :4], x_[:, 4]
                 i = torchvision.ops.nms(boxes, scores, iou_thresh)  # NMS
