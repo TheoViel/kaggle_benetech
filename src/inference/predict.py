@@ -31,12 +31,9 @@ def predict(model, dataset, loss_config, batch_size=64, device="cuda", use_fp16=
     )
 
     with torch.no_grad():
-        for data, _, _ in tqdm(loader):
-            for k in data.keys():
-                data[k] = data[k].cuda()
-
+        for img, _, _ in tqdm(loader):
             with torch.cuda.amp.autocast(enabled=use_fp16):
-                pred, pred_aux = model(data)
+                pred, pred_aux = model(img.cuda())
 
             # Get probabilities
             if loss_config["activation"] == "sigmoid":
