@@ -278,7 +278,7 @@ def retrieve_model(config, model=None):
             weights=weights,
             device=torch.device('cuda')
         ).model
-    elif "yolov7" in weights:
+    else:
         assert "../yolov5/" not in sys.path
         sys.path.append("../yolov7/")
         from models.experimental import attempt_load
@@ -288,6 +288,7 @@ def retrieve_model(config, model=None):
             model = attempt_load(weights).cuda()
         else:
             model = model.cuda()
+    
         
     model = YoloWrapper(model, config)
     
