@@ -20,7 +20,7 @@ jobs:
       # zip files
       - uses: vimtor/action-zip@v1
         with:
-          files: src
+          files: src yolov7
           dest: repo.zip
           recursive: false
       # Runs a single command using the runners shell
