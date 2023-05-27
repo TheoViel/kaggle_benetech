@@ -6,10 +6,19 @@ import pandas as pd
 from data.dataset import ClsDataset
 from data.transforms import get_transfos
 from model_zoo.models import define_model
-from util.logger import Config
 from util.torch import load_model_weights
 from util.metrics import accuracy
 from inference.predict import predict
+
+
+class Config:
+    """
+    Placeholder to load a config from a saved json
+    """
+
+    def __init__(self, dic):
+        for k, v in dic.items():
+            setattr(self, k, v)
 
 
 def kfold_inference(
