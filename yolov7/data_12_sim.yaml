@@ -1,0 +1,1 @@
+{names: [point], nc: 1, train: ../input/v12_sim/images/train/, val: ../input/v12_sim/images/valid/}

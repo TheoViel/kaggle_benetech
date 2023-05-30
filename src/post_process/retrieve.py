@@ -62,7 +62,7 @@ def point_nms(coords, scores, dist_th=8):
     return np.array(selected_indices)
 
 
-def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None):
+def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None, hw=5):
     n_filters = 32
 
     pool_size = 5
@@ -138,7 +138,13 @@ def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None):
     kept_ids = kept_ids[len(points):] - len(points)
 
     new_boxes = candidates[kept_ids]
-    hw = 5
+    if hw is None:
+        h = np.median([preds[-1][:5, 2] - preds[-1][:5, 0]])
+        w = np.median([preds[-1][:5, 3] - preds[-1][:5, 1]])
+        print(h, w)
+        hw = int(np.mean([h, w]) / 2)
+        
+    
     new_boxes = np.concatenate(
         [
             new_boxes[:, :1] - hw,

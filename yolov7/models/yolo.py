@@ -742,8 +742,12 @@ class Model(nn.Module):
 #                 print(m_idx, x.size())
 #             except:
 #                 pass
-            if m_idx in [2, 11, 20]:  # , 20, 29, 38, 47]:
-                fts.append(x.clone())
+            if return_fts:
+                if m_idx in [2, 11, 20]:  # , 20, 29, 38, 47]:
+                    try:
+                        fts.append(x.clone())
+                    except:
+                        pass
                 
 #             if isinstance(m, IAuxDetect):
 #                 fts = [torch.clone(x_).view(x_.size(0), x_.size(1), -1).transpose(1, 2) for x_ in x]
