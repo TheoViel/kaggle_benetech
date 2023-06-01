@@ -41,10 +41,7 @@ def point_nms(coords, scores, dist_th=8):
     #     print(np.round(dists, 1))
 
     # Sort by x sth ??
-    sorted_indices = np.argsort(
-        scores
-    )  # np.arange(len(coords))  # sorted(range(len(coords)), key=lambda i: coords[i][0])
-    #     print(sorted_indices)
+    sorted_indices = np.argsort(scores)
 
     # Initialize list to store selected indices
     selected_indices = [sorted_indices[0]]
@@ -62,7 +59,9 @@ def point_nms(coords, scores, dist_th=8):
     return np.array(selected_indices)
 
 
-def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None, hw=5):
+def retrieve_missing_boxes(
+    preds, img, min_sim=0.85, verbose=0, seed=None, hw=5, max_retrieved=20, margin=0
+):
     n_filters = 32
 
     pool_size = 5
@@ -103,14 +102,17 @@ def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None, hw=5)
             sim = torch.where(sim > min_sim, sim, 0)
             sim = torch.where(sim == pool(sim), sim, 0)
 
-            #             if verbose:
-            #                 plt.imshow(sim.cpu().numpy()[0])
-            #                 plt.show()
+#             if verbose:
+#                 plt.figure(figsize=(15, 5))
+#                 plt.imshow(sim.cpu().numpy()[0])
+#                 plt.show()
 
             yc, xc = torch.where(sim[0] > 0)
             coords = torch.cat([xc.unsqueeze(-1), yc.unsqueeze(-1)], -1)
+            
+#             print(coords)
 
-            if len(coords) - len(dots) < 20:
+            if len(coords) - len(dots) < max_retrieved:
                 #                 print('!!')
                 candidates.append(coords.cpu().numpy())
 
@@ -141,10 +143,9 @@ def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None, hw=5)
     if hw is None:
         h = np.median([preds[-1][:5, 2] - preds[-1][:5, 0]])
         w = np.median([preds[-1][:5, 3] - preds[-1][:5, 1]])
-        print(h, w)
+#         print(h, w)
         hw = int(np.mean([h, w]) / 2)
         
-    
     new_boxes = np.concatenate(
         [
             new_boxes[:, :1] - hw,
@@ -160,14 +161,14 @@ def retrieve_missing_boxes(preds, img, min_sim=0.85, verbose=0, seed=None, hw=5)
         print(new_boxes)
 
     # Points are inside the graph
-    margin = 0
-    try:
-        graph = preds[0][0]
-    except Exception:
-        return new_boxes
-    new_boxes = new_boxes[new_boxes[:, 0] > graph[0] - margin]
-    new_boxes = new_boxes[new_boxes[:, 1] > graph[1] - margin]
-    new_boxes = new_boxes[new_boxes[:, 2] < graph[2] + margin]
-    new_boxes = new_boxes[new_boxes[:, 3] < graph[3] + margin]
+    if margin >= 0:
+        try:
+            graph = preds[0][0]
+        except Exception:
+            return new_boxes
+        new_boxes = new_boxes[new_boxes[:, 0] > graph[0] - margin]
+        new_boxes = new_boxes[new_boxes[:, 1] > graph[1] - margin]
+        new_boxes = new_boxes[new_boxes[:, 2] < graph[2] + margin]
+        new_boxes = new_boxes[new_boxes[:, 3] < graph[3] + margin]
 
     return new_boxes

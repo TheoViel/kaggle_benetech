@@ -297,6 +297,22 @@ def retrieve_model(config, model=None):
     return model.eval()
 
 
+def retrieve_model_robust(config, yolov7_path='../yolov7/'):
+    """
+    """
+    sys.path.append(yolov7_path)
+    from models.yolo import Model
+    from utils.general import non_max_suppression
+
+    model = Model(config.cfg)
+    model.load_state_dict(torch.load(config.weights), strict=True)
+    model = YoloWrapper(model, config).cuda()
+    model.non_max_suppression = non_max_suppression
+
+    return model.eval()
+
+
+
 class InferenceDataset(Dataset):
     """
     Detection dataset for inference.
