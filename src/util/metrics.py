@@ -64,7 +64,7 @@ def iou_score(bbox1, bbox2):
     return size_intersection / size_union
 
 
-def precision_calc(gt_boxes, pred_boxes, threshold=0.25, return_assignment=False):
+def precision_calc(gt_boxes, pred_boxes, threshold=0.1, return_assignment=False):
     """
     Counts TPs, FPs and FNs for a given IoU threshold between boxes in the pascal_voc format.
     If return_assignment is True, it returns the assigments between predictions and GTs.

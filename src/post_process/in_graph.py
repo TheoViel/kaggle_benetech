@@ -54,7 +54,7 @@ def post_process_preds_dots(preds, margin_pt=10, margin_text=30):
     margin = margin_pt
 #     print(graph)
     points = points[points[:, 2] > graph[0] + margin]
-#     points = points[points[:, 1] > graph[1] - margin]
+    points = points[points[:, 1] > graph[1] - margin]
     points = points[points[:, 2] < graph[2] + margin]
     points = points[points[:, 1] < graph[3] - margin]
     

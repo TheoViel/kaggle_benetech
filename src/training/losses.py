@@ -160,3 +160,119 @@ class ClsLoss(nn.Module):
                 w_aux_tot += (self.aux_loss_weight * (layer + 1))
 
         return (1 - w_aux_tot) * loss + w_aux_tot * loss_aux_tot
+
+    
+    
+import torch
+import torch.nn as nn
+
+
+def neg_loss(pred, gt):
+    """
+    Modified focal loss. Exactly the same as CornerNet.
+    Runs faster and costs a little bit more memory
+
+    Arguments:
+        pred (batch x c x h x w)
+        gt_regr (batch x c x h x w)
+    """
+    pred = pred.unsqueeze(1).float()
+    gt = gt.unsqueeze(1).float()
+
+    pos_inds = gt.eq(1).float()
+    neg_inds = gt.lt(1).float()
+    neg_weights = torch.pow(1 - gt, 4)
+
+    pos_loss = torch.log(pred + 1e-12) * torch.pow(1 - pred, 3) * pos_inds
+    neg_loss = torch.log(1 - pred + 1e-12) * torch.pow(pred, 3) * neg_weights * neg_inds
+
+    num_pos = pos_inds.float().sum((1, 2, 3))
+    pos_loss = pos_loss.sum((1, 2, 3))
+    neg_loss = neg_loss.sum((1, 2, 3))
+
+#     loss = - (
+#         neg_loss * (num_pos == 0) + 
+#         (num_pos > 0 ) * (pos_loss + neg_loss) / (num_pos + 1e-6)
+#     )
+
+    loss = (pos_loss + neg_loss) / (num_pos + 1e-6)
+
+    return loss
+
+
+class CenterLoss(nn.Module):
+    """
+    https://www.kaggle.com/code/kyoshioka47/centernet-starterkit-pytorch/notebook
+    
+    TODO
+
+    Attributes:
+        config (dict): Configuration parameters.
+        device (str): Device to use for computations.
+        aux_loss_weight (float): Weight for the auxiliary loss.
+        ousm_k (int): Number of samples to exclude in the OUSM variant. Defaults to 0.
+        eps (float): Smoothing value. Defaults to 0.
+        loss (nn.Module): Loss function.
+        loss_aux (nn.Module): Auxiliary loss function.
+
+    Methods:
+        __init__(self, config, device="cuda"): Constructor.
+        prepare(self, pred, y): Prepares the predictions and targets for loss computation.
+        forward(self, pred, pred_aux, y, y_aux): Computes the loss.
+    """
+    def __init__(self, config={}, device="cuda"):
+        """
+        Constructor.
+
+        Args:
+            config (dict): Configuration parameters.
+            device (str, optional): Device to use for computations. Defaults to "cuda".
+        """
+        super().__init__()
+        self.config = config
+        self.device = device
+        
+        self.bce = nn.BCEWithLogitsLoss(reduction="none")
+
+    def prepare(self, pred, y):
+        """
+        Prepares the predictions and targets for loss computation.
+
+        Args:
+            pred (torch.Tensor): Predictions.
+            y (torch.Tensor): Targets.
+
+        Returns:
+            Tuple(torch.Tensor, torch.Tensor): Prepared predictions and targets.
+        """
+        with torch.no_grad():
+            y = y.transpose(-2, -1).transpose(-3, -2).contiguous()
+            y = F.interpolate(y, scale_factor=0.25)
+
+        return pred, y
+
+    def forward(self, pred, y):
+        """
+        Computes the loss.
+
+        Args:
+            pred (torch.Tensor): Main predictions.
+            pred_aux (list): Auxiliary predictions.
+            y (torch.Tensor): Main targets.
+            y_aux (list): Auxiliary targets.
+
+        Returns:
+            torch.Tensor: Loss value.
+        """
+        pred, y = self.prepare(pred, y)
+        
+#         print(pred.size(), y.size())
+        loss = self.bce(pred[:, 0], y[:, 0]).mean(-1).mean(-1)
+#         print(loss.size())
+        
+        return loss.mean()
+
+        loss_center = neg_loss(pred[:, 0].sigmoid(), y[:, 0])
+        loss_reg = (torch.abs(pred[:, 1:] - y[:, 1:]).sum(1) * y[:, 0]).sum(1).sum(1) / y[:, 0].sum(1).sum(1)
+        
+        return (loss_center + loss_reg).mean()

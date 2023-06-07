@@ -6,36 +6,64 @@ from collections import Counter
 
 def cluster_on_x(dots, w, plot=False):
     xs = (dots[:, 0] + dots[:, 2]) / 2
+    ys = (dots[:, 1] + dots[:, 3]) / 2
 
     dbscan = DBSCAN(min_samples=1, eps=0.01 * w)
     dbscan.fit(xs[:, None])
     labels = dbscan.labels_
 
     centers = []
+#     plot = True
     for l in np.unique(labels):
         centers.append(xs[labels == l].mean())
 
         if plot:
             plt.scatter(
                 xs[labels == l],
-                -(dots[:, 1] + dots[:, 3])[labels == l] / 2,
+                -ys[labels == l],
                 label=f"Cluster {l}",
             )
     if plot:
         plt.legend()
         plt.show()
+        
+    labels = np.array(labels)
+    centers = np.array(centers)
+#     print(labels)
+#     print(centers)
+    clusters_y = [np.sort(ys[labels == i])[::-1] for i in np.unique(labels)]
 
-    return np.array(centers), Counter(labels)
+    first = np.median([c[0] for c in clusters_y])
+    second = np.median([c[1] for c in clusters_y if len(c) > 1])
+    third = np.median([c[2] for c in clusters_y if len(c) > 2])
+    
+    if len([c[1] for c in clusters_y if len(c) > 2]) > 2:
+        delta = (first - third) / 2
+    else:
+        delta = (first - second)
+    
+#     print(delta)
+#     print([first - c.min() for c in clusters_y])
+    
+    counts = [np.round((first - c.min()) / (delta) + 1) for c in clusters_y]
+    
+    clusters = dict(zip(np.unique(labels), counts))
+#     print(clusters)
+#     print(Counter(labels))
+
+    return centers, clusters  # Counter(labels)
 
 
 def my_assignment(mat):
     row_ind, col_ind = [], []
     for i in range(np.min(mat.shape)):
         row, col = np.unravel_index(np.argmin(mat), mat.shape)
-        mat[row] = np.inf
-        mat[:, col] = np.inf
-        row_ind.append(row)
-        col_ind.append(col)
+        value = mat[row, col]
+        if value < 20:
+            mat[row] = np.inf
+            mat[:, col] = np.inf
+            row_ind.append(row)
+            col_ind.append(col)
 
     return row_ind, col_ind
 

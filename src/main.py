@@ -5,7 +5,13 @@ import warnings
 import argparse
 import pandas as pd
 
-from data.preparation import prepare_data, prepare_gen_data
+from data.preparation import (
+    prepare_data,
+    prepare_gen_data,
+    prepare_dots,
+    prepare_xqa_data,
+    limit_training_samples
+)
 from params import DATA_PATH, CLASSES
 from util.torch import init_distributed
 from util.logger import create_logger, save_config, prepare_log_folder, init_neptune
@@ -76,7 +82,7 @@ class Config:
     img_folder = "train/images/"
     window = img_folder.endswith("_w/")
     aug_strength = 3
-    resize = (256, 384)  # (384, 576)
+    resize = (384, 576)  # (256, 384)  # (384, 576)
 
     # k-fold
     k = 4
@@ -98,7 +104,7 @@ class Config:
     # Training
     loss_config = {
         "name": "ce",
-        "smoothing": 0.0,
+        "smoothing": 0.,
         "activation": "softmax",
         "aux_loss_weight": 0.,
         "pos_weight": None,
@@ -128,7 +134,7 @@ class Config:
     use_fp16 = True
 
     verbose = 1
-    verbose_eval = 200
+    verbose_eval = 100
 
     fullfit = False
     n_fullfit = 1
@@ -172,10 +178,32 @@ if __name__ == "__main__":
         config.data_config["val_bs"] = args.batch_size
 
     df = prepare_data(DATA_PATH, DATA_PATH + Config.img_folder)
-    df_gen = prepare_gen_data(DATA_PATH)
-    df_gen_a = prepare_gen_data(DATA_PATH, img_folder="gen_andrija/")
+#     df = limit_training_samples(df, {'vertical_bar': 5000, 'scatter': 10000, 'line': 5000})
 
-    df = pd.concat([df, df_gen, df_gen_a], ignore_index=True)
+    df_dot = prepare_dots(DATA_PATH)  # val dots
+    df_xqa = prepare_xqa_data(DATA_PATH)  # xQA
+    df_gen = prepare_gen_data(DATA_PATH, img_folder="generated/bars_v2/")
+    df_gen_a = prepare_gen_data(DATA_PATH, img_folder="gen_andrija/")
+    
+    df_gen_b = prepare_gen_data(DATA_PATH, img_folder="bartley/500k_graphs/")
+    df_gen_b = limit_training_samples(df_gen_b, {'*': 1})
+    
+    if config.local_rank == 0:
+        print()
+        print('Original data :',  df['chart-type'].value_counts().to_dict())
+        print('Dot data :',  df_dot['chart-type'].value_counts().to_dict())
+        print('xQA data :',  df_xqa['chart-type'].value_counts().to_dict())
+        print('Excel data :',  df_gen['chart-type'].value_counts().to_dict())
+        print('Matplotlib data :', df_gen_a['chart-type'].value_counts().to_dict())
+        print('Kaggle public data :', df_gen_b['chart-type'].value_counts().to_dict())
+
+    df = pd.concat([df, df_dot, df_xqa, df_gen, df_gen_a, df_gen_b], ignore_index=True)
+    
+    if config.local_rank == 0:
+        print()
+        print('Train data :',  df[df['split'] == "train"]['chart-type'].value_counts().to_dict())
+        print('Val data :',  df[df['split'] != "train"]['chart-type'].value_counts().to_dict())
+        print()
 
     try:
         print(torch_performance_linter)  # noqa
