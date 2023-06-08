@@ -1,1 +1,0 @@
-{names: [ball, player], nc: 2, train: ../input/tracking//images/train, val: ../input/tracking//images/valid}
