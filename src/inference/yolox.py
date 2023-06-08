@@ -59,8 +59,7 @@ def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
     return meter, fts_list
 
 
-def retrieve_yolox_model(name="benetech_1_m_1", cp="best_ckpt.pth", verbose=1):
-    exp_file = f"../yolox/exps/{name}.py"
+def retrieve_yolox_model(exp_file, ckpt_file, verbose=1):
     sys.path.append(os.path.dirname(exp_file))
     current_exp = importlib.import_module(os.path.basename(exp_file).split(".")[0])
 
@@ -72,7 +71,6 @@ def retrieve_yolox_model(name="benetech_1_m_1", cp="best_ckpt.pth", verbose=1):
 
     model_roi_ = exp.get_model()
     
-    ckpt_file = f"../yolox/YOLOX_outputs/{name}/{cp}"
     if verbose:
         print(" -> Loading weights from", ckpt_file)
 
