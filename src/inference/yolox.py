@@ -8,6 +8,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 sys.path.append("../yolox")
+sys.path.append("yolox")
 from yolox.utils import postprocess
 from inference.utils import DetectionMeter, collate_fn_val_yolo
 

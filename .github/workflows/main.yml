@@ -32,8 +32,8 @@ jobs:
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
         with:
-          id: "${{ secrets.KAGGLE_USERNAME }}/benetech-code"
-          title: "Benetech Code"
+          id: "${{ secrets.KAGGLE_USERNAME }}/benetech-code-v2"
+          title: "Benetech Code v2"
           subtitle: "Uploaded via github action"
           description: ""
           files: repo.zip
