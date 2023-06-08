@@ -81,10 +81,10 @@ class InferenceDataset(Dataset):
 #         print(image.shape)
         if self.pad:
             if image.shape[1] > image.shape[0] * 1.5:
-                padding = 255 * np.ones((image.shape[0] // 2, image.shape[1], image.shape[2]), dtype=image.dtype)
+                padding = 255 * np.ones((int(image.shape[1] * 0.8) - image.shape[0], image.shape[1], image.shape[2]), dtype=image.dtype)
                 image = np.concatenate([image, padding], 0)
-#         print(image.shape)
-
+#                 print(image.shape)
+    
         shape = image.shape
 
         if self.transforms is not None:
