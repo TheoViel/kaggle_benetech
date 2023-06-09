@@ -128,16 +128,20 @@ def compute_metrics(preds, truths):
             ffp.append(fp)
             ffn.append(fn)
             
+            assert ftp + ffn == len(truth)
+            
         tp = np.sum(ftp)
         fp = np.sum(ffp)
         fn = np.sum(ffn)
     else:
         tp, fp, fn = precision_calc(truths.copy(), preds.copy())
+        assert tp + fn == len(truths), (tp, fp, fn, len(truths), len(preds))
+        assert len(truths)
 
-    precision = tp / (tp + fp) if tp + fp else 1
-    recall = tp / (tp + fn) if tp + fn else 1
+    precision = tp / (tp + fp) if tp + fp else 0
+    recall = tp / (tp + fn) # if tp + fn else 1
 
-    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 1
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0.
     return {
         "tp": tp,
         "fp": fp,

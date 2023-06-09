@@ -60,15 +60,15 @@ def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
     return meter, fts_list
 
 
-def retrieve_yolox_model(exp_file, ckpt_file, verbose=1):
+def retrieve_yolox_model(exp_file, ckpt_file, size=(1024, 1024), verbose=1):
     sys.path.append(os.path.dirname(exp_file))
     current_exp = importlib.import_module(os.path.basename(exp_file).split(".")[0])
 
     exp = current_exp.Exp()
 
     exp.test_conf = 0.0
-    exp.test_size = (1024, 1024)
-    exp.nmsthre = 0.45  # 0.65
+    exp.test_size = size
+    exp.nmsthre = 0.75
 
     model_roi_ = exp.get_model()
     
@@ -79,7 +79,7 @@ def retrieve_yolox_model(exp_file, ckpt_file, verbose=1):
     model_roi_.load_state_dict(ckpt["model"], strict=True)
 
     model_roi_.max_det = 100
-    model_roi_.nmsthre = 0.5
+    model_roi_.nmsthre = 0.75
     model_roi_.test_conf = 0.1
     model_roi_.test_size = exp.test_size
     model_roi_.num_classes = 1
@@ -144,7 +144,7 @@ class YoloXWrapper(nn.Module):
         while pred_boxes_ is None:
 #             print(conf_thresh)
             pred_boxes_ = postprocess(
-                pred_boxes, 1, conf_thresh, self.iou_thresh, class_agnostic=False,
+                pred_boxes.clone(), 1, conf_thresh, self.iou_thresh, class_agnostic=False,
             )[0]
             
             conf_thresh = max(conf_thresh - 0.1, conf_thresh / 10)

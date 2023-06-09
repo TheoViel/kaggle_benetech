@@ -4,6 +4,55 @@ from scipy.stats import pearsonr, spearmanr
 
 from post_process.outliers import find_outliers, find_outliers_order
 
+def handle_sign(x_train, values, verbose=0, corr="spearman", th=0.99, mode="x"):
+    corr_fct = spearmanr if corr == "spearman" else pearsonr
+    
+    if np.all(values >= 0):
+        return values
+    elif np.all(values <= 0):
+        if mode == "x":
+            if np.all(values[np.argsort(x_train)] == np.sort(values)):
+                return values
+        else:
+            if np.all(values[np.argsort(x_train)] == np.sort(values)[::-1]):
+                return values
+    elif np.all(values[np.argsort(x_train)] == np.sort(values)):
+        return values
+    elif np.all(values[np.argsort(x_train)] == np.sort(values)[::-1]):
+        return values
+    
+    corr_start = np.abs(corr_fct(x_train, values).statistic)
+    
+    values_abs = np.abs(values)
+    corr_abs = np.abs(corr_fct(x_train, np.abs(values)).statistic)
+    
+#     print(mode)
+#     print(corr_start, corr_abs)
+#     print(values_abs)
+#     print(values_abs[np.argsort(x_train)])
+    
+    if corr_abs >= corr_start:
+        if mode == "x":
+            if np.all(values_abs[np.argsort(x_train)] == np.sort(values_abs)):
+                if verbose:
+                    print('Increasing, using abs(x) !')
+                return values_abs
+            elif np.all(values_abs[np.argsort(x_train)] == np.sort(values_abs)[::-1]):
+                if verbose:
+                    print('Decreasing, using -abs(x) !')
+                return - values_abs
+        else:
+            if np.all(values_abs[np.argsort(-x_train)] == np.sort(values_abs)):
+                if verbose:
+                    print('Increasing, using abs(y) !')
+                return values_abs
+            elif np.all(values_abs[np.argsort(-x_train)] == np.sort(values_abs)[::-1]):
+                if verbose:
+                    print('Decreasing, using -abs(y) !')
+                return - values_abs
+        
+    return values
+
 
 def linear_regression(ticks, values, errors, points, mode="x", verbose=0):
     if len(np.unique(values)) == 1:
@@ -24,7 +73,9 @@ def linear_regression(ticks, values, errors, points, mode="x", verbose=0):
     corr_rank = np.abs(spearmanr(x_train, values).statistic)
 
     if verbose:
-        print("Correlations before pp", corr, corr_rank)
+        print(f"Correlations {mode} before pp", corr, corr_rank)
+        
+    values = handle_sign(x_train, values, verbose=1, corr="pearson", mode=mode)
 
     outliers = find_outliers(x_train, values, verbose=verbose, corr="pearson")
     x_train = np.array([x for j, x in enumerate(x_train) if j not in outliers])

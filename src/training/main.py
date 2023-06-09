@@ -144,6 +144,7 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
     
     df_train = df[df['split'] == "train"].reset_index(drop=True)
     df_val = df[df['split'] != "train"].reset_index(drop=True)
+    df_val = df_val.drop_duplicates(keep="first", subset="path").reset_index(drop=True)
 
     if config.local_rank == 0:
         print(
@@ -176,13 +177,16 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
                     f"\n-------------   Fullfit {ff + 1} / {config.n_fullfit} -------------\n"
                 )
             seed_everything(config.seed + ff)
-
-            df_train = df.copy()
+            
+            df_train_ff = pd.concat(
+                [df_train] + [df_val] * config.oversample_extracted,
+                ignore_index=True
+            )
 
             train(
                 config,
-                df_train,
-                df.tail(100).reset_index(drop=True),
+                df_train_ff,
+                df_val,
                 f"fullfit_{ff}",
                 log_folder=log_folder,
                 run=run,

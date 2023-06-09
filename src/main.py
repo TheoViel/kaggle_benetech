@@ -82,7 +82,7 @@ class Config:
     img_folder = "train/images/"
     window = img_folder.endswith("_w/")
     aug_strength = 3
-    resize = (384, 576)  # (256, 384)  # (384, 576)
+    resize = (256, 384)  # (256, 384)  # (384, 576)
 
     # k-fold
     k = 4
@@ -123,7 +123,7 @@ class Config:
 
     optimizer_config = {
         "name": "Ranger",
-        "lr": 4e-4,
+        "lr": 3e-4,
         "warmup_prop": 0.1,
         "betas": (0.9, 0.999),
         "max_grad_norm": 10.0,
@@ -136,8 +136,9 @@ class Config:
     verbose = 1
     verbose_eval = 100
 
-    fullfit = False
-    n_fullfit = 1
+    fullfit = True
+    oversample_extracted = 10
+    n_fullfit = 2
 
 
 if __name__ == "__main__":
@@ -180,24 +181,31 @@ if __name__ == "__main__":
     df = prepare_data(DATA_PATH, DATA_PATH + Config.img_folder)
 #     df = limit_training_samples(df, {'vertical_bar': 5000, 'scatter': 10000, 'line': 5000})
 
-    df_dot = prepare_dots(DATA_PATH)  # val dots
-    df_xqa = prepare_xqa_data(DATA_PATH)  # xQA
+    df_dot = prepare_dots(DATA_PATH, oversample=100, oversample_val=100 if config.fullfit else 1)  # val dots
+#     df_xqa = prepare_xqa_data(DATA_PATH)  # xQA
     df_gen = prepare_gen_data(DATA_PATH, img_folder="generated/bars_v2/")
     df_gen_a = prepare_gen_data(DATA_PATH, img_folder="gen_andrija/")
     
-    df_gen_b = prepare_gen_data(DATA_PATH, img_folder="bartley/500k_graphs/")
-    df_gen_b = limit_training_samples(df_gen_b, {'*': 1})
+#     df_gen_b = prepare_gen_data(DATA_PATH, img_folder="bartley/500k_graphs/")
+#     df_gen_b = limit_training_samples(df_gen_b, {'*': 1})
     
     if config.local_rank == 0:
         print()
         print('Original data :',  df['chart-type'].value_counts().to_dict())
         print('Dot data :',  df_dot['chart-type'].value_counts().to_dict())
-        print('xQA data :',  df_xqa['chart-type'].value_counts().to_dict())
+#         print('xQA data :',  df_xqa['chart-type'].value_counts().to_dict())
         print('Excel data :',  df_gen['chart-type'].value_counts().to_dict())
         print('Matplotlib data :', df_gen_a['chart-type'].value_counts().to_dict())
-        print('Kaggle public data :', df_gen_b['chart-type'].value_counts().to_dict())
+#         print('Kaggle public data :', df_gen_b['chart-type'].value_counts().to_dict())
 
-    df = pd.concat([df, df_dot, df_xqa, df_gen, df_gen_a, df_gen_b], ignore_index=True)
+    df = pd.concat([
+        df,
+        df_dot,
+#         df_xqa,
+        df_gen,
+        df_gen_a,
+#         df_gen_b
+    ], ignore_index=True)
     
     if config.local_rank == 0:
         print()
@@ -237,7 +245,7 @@ if __name__ == "__main__":
         print("\n -> Training\n")
 
     from training.main import k_fold
-    k_fold(Config, df, df_extra=None, log_folder=log_folder, run=run)
+    k_fold(Config, df, log_folder=log_folder, run=run)
 
     if config.local_rank == 0:
         print("\nDone !")

@@ -49,6 +49,9 @@ def post_process_texts(texts):
         t = re.sub("O", "0", t)
         t = re.sub("o", "0", t)
         t = re.sub("o", "0", t)
+        
+        # spaces
+        t = re.sub('\s+', "", t)
 
         # No numeric ?
         if not any(c.isnumeric() for c in t):

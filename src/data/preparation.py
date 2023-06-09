@@ -23,7 +23,7 @@ def limit_training_samples(df, lims={}, key='chart-type'):
     return pd.concat(limited_dfs, ignore_index=True)
 
 
-def prepare_dots(data_path="../input/", oversample=100):
+def prepare_dots(data_path="../input/", oversample=100, oversample_val=1):
     dfs = []
         
     df = pd.DataFrame({"path": glob.glob(data_path + 'dots/*')})
@@ -32,8 +32,10 @@ def prepare_dots(data_path="../input/", oversample=100):
     df['chart-type'] = "dot"
     df['split'] = "val"
     df['target'] = 1
-    dfs.append(df)
-   
+    
+    for _ in range(oversample_val):
+        dfs.append(df)
+
     df = pd.DataFrame({"path": glob.glob(data_path + 'dots_2/*')})
     df['id'] = df['path'].apply(lambda x: Path(x).stem)
     df['source'] = "extracted"

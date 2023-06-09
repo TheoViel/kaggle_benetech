@@ -30,7 +30,7 @@ class InferenceDataset(Dataset):
         __getitem__(self, idx): Returns the item at the specified index.
     """
 
-    def __init__(self, df, transforms=None, pad=False):
+    def __init__(self, df, transforms=None, pad=False, pad_advanced=False):
         """
         Constructor
 
@@ -42,6 +42,7 @@ class InferenceDataset(Dataset):
         self.paths = df['path'].values
         self.transforms = transforms
         self.pad = pad
+        self.pad_advanced = pad_advanced
         
         self.gts, self.classes = [], []
         for i in range(len(df)):
@@ -75,14 +76,24 @@ class InferenceDataset(Dataset):
             tuple: A tuple containing the image, ground truth, and image shape.
         """
         image = cv2.imread(self.paths[idx])
-        
-#         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-#         print(image.shape)
         if self.pad:
-            if image.shape[1] > image.shape[0] * 1.5:
-                padding = 255 * np.ones((int(image.shape[1] * 0.8) - image.shape[0], image.shape[1], image.shape[2]), dtype=image.dtype)
+            if image.shape[1] > image.shape[0] * 1.4:
+                padding = 255 * np.ones(
+                    (int(image.shape[1] * 0.9) - image.shape[0], image.shape[1], image.shape[2]),
+                    dtype=image.dtype
+                )
                 image = np.concatenate([image, padding], 0)
+                
+            if self.pad_advanced:
+                if image.shape[1] < image.shape[0] * 0.9:
+#                     print(image.shape)
+                    padding = 255 * np.ones(
+                        (image.shape[0], int(image.shape[0] * 1) - image.shape[1], image.shape[2]),
+                        dtype=image.dtype
+                    )
+                    image = np.concatenate([image, padding], 1)
+#                     print(image.shape)
 #                 print(image.shape)
     
         shape = image.shape
@@ -214,3 +225,59 @@ def collate_fn_val_yolo(batch):
     """
     img, boxes, shapes = zip(*batch)
     return torch.stack(list(img), 0), boxes, shapes
+
+
+def nms(bounding_boxes, confidence_score, threshold=0.5):
+    # If no bounding boxes, return empty list
+    if len(bounding_boxes) == 0:
+        return [], []
+
+    # Bounding boxes
+    boxes = np.array(bounding_boxes)
+
+    # coordinates of bounding boxes
+    start_x = boxes[:, 0]
+    start_y = boxes[:, 1]
+    end_x = boxes[:, 2]
+    end_y = boxes[:, 3]
+
+    # Confidence scores of bounding boxes
+    score = np.array(confidence_score)
+
+    # Picked bounding boxes
+    picked_boxes = []
+    picked_score = []
+
+    # Compute areas of bounding boxes
+    areas = (end_x - start_x + 1) * (end_y - start_y + 1)
+
+    # Sort by confidence score of bounding boxes
+    order = np.argsort(score)
+
+    # Iterate bounding boxes
+    while order.size > 0:
+        # The index of largest confidence score
+        index = order[-1]
+
+        # Pick the bounding box with largest confidence score
+        picked_boxes.append(bounding_boxes[index])
+        picked_score.append(confidence_score[index])
+
+        # Compute ordinates of intersection-over-union(IOU)
+        x1 = np.maximum(start_x[index], start_x[order[:-1]])
+        x2 = np.minimum(end_x[index], end_x[order[:-1]])
+        y1 = np.maximum(start_y[index], start_y[order[:-1]])
+        y2 = np.minimum(end_y[index], end_y[order[:-1]])
+
+        # Compute areas of intersection-over-union
+        w = np.maximum(0.0, x2 - x1 + 1)
+        h = np.maximum(0.0, y2 - y1 + 1)
+        intersection = w * h
+
+        # Compute the ratio between intersection and union
+        ratio = intersection / (areas[index] + areas[order[:-1]] - intersection)
+
+        left = np.where(ratio < threshold)
+        order = order[left]
+
+    return np.array(picked_boxes), np.array(picked_score)
