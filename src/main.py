@@ -182,7 +182,7 @@ if __name__ == "__main__":
 
     df_dot = prepare_dots(DATA_PATH, oversample=100, oversample_val=100 if config.fullfit else 1)  # val dots
 
-    df_gen = prepare_gen_data(DATA_PATH, img_folder="generated/bars_v2/")
+    df_gen = prepare_gen_data(DATA_PATH, img_folder="bars_v2/")
     df_gen_a = prepare_gen_data(DATA_PATH, img_folder="gen_andrija/")
 
     if config.local_rank == 0:
