@@ -2,7 +2,7 @@
 
 **Authors :** [Theo Viel](https://github.com/TheoViel), [Andrija Milicevic](https://github.com/CroDoc)
 
-## Introduction - Adapted from [TODO](link)
+## Introduction - Adapted from [Kaggle](https://www.kaggle.com/competitions/benetech-making-graphs-accessible/discussion/418420)
 
 Our solution is a 2 step pipeline, where the first step is a simple classification task and the 2nd step solves the task for the different chart types. For scatter and dot plots, we used a detection approach. For line and bar charts, Matcha was really strong. This repository contains the code for the classification, dot and scatter parts.
 
@@ -55,12 +55,12 @@ It relies on the original YoloX repository.
 
 Dot and scatter pipelines are available in the `notebooks/` folder. Make sure to replace the weights with the correct paths depending on your setup.
 
-#### Evaluation & inference
+#### Inference
 
-Evaluate your models using `Validation.ipynb`. The second part of the notebook runs the inference on the validation data, and is used to evaluate distilled models with (or without) model soup. Conversion of the models to tflite is done using `Inference_Ens.ipynb`. 
+Inference is done on Kaggle, notebook is [here](https://www.kaggle.com/code/crodoc/benetech-mit-ensemble?scriptVersionId=134055662).
 
 
-## Code structure
+### Code structure
 
 If you wish to dive into the code, the repository naming should be straight-forward. Each function is documented.
 The structure is the following :
