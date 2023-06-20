@@ -2,6 +2,15 @@ import numpy as np
 
 
 def my_assignment(mat):
+    """
+    Performs assignment of rows and columns based on the minimum values in the given matrix.
+
+    Args:
+        mat (np.ndarray): The input matrix.
+
+    Returns:
+        List[int], List[int]: Lists of row indices and column indices representing the assignment.
+    """
     row_ind, col_ind = [], []
     for i in range(np.min(mat.shape)):
         row, col = np.unravel_index(np.argmin(mat), mat.shape)
@@ -14,18 +23,28 @@ def my_assignment(mat):
 
 
 def assign(ticks, labels, tol=2, mode="x"):
+    """
+    Assign labels to ticks based on their proximity.
+
+    Args:
+        ticks (numpy.ndarray): Array of tick coordinates.
+        labels (numpy.ndarray): Array of label coordinates.
+        tol (int): Tolerance value for assigning labels to ticks.
+        mode (str): Mode indicating whether to assign labels along the x-axis ("x") or y-axis ("y").
+
+    Returns:
+        numpy.ndarray: Assigned tick coordinates.
+        numpy.ndarray: Assigned label coordinates.
+    """
     if mode == "x":
         labels_x, labels_y = (labels[:, 0] + labels[:, 2]) / 2, labels[:, 1]
     else:
         labels_x, labels_y = labels[:, 2], (labels[:, 1] + labels[:, 3]) / 2
 
     labels_xy = np.stack([labels_x, labels_y], -1)
-    #     print(labels_xy.shape)
 
     ticks_x, ticks_y = (ticks[:, 0] + ticks[:, 2]) / 2, (ticks[:, 1] + ticks[:, 3]) / 2
     ticks_xy = np.stack([ticks_x, ticks_y], -1)
-
-    #     print(ticks_xy.shape)
 
     cost_matrix = np.sqrt(((ticks_xy[:, None] - labels_xy[None]) ** 2).sum(-1))
 
@@ -41,16 +60,12 @@ def assign(ticks, labels, tol=2, mode="x"):
 
     row_ind, col_ind = my_assignment(cost_matrix.copy())
 
-    #     print(row_ind, col_ind)
-
     ticks_assigned, labels_assigned = [], []
-
     for tick_idx, label_idx in zip(row_ind, col_ind):
-        #         print(cost_matrix[tick_idx, label_idx])
         if cost_matrix[tick_idx, label_idx] < max(tol * 5, tol * np.min(cost_matrix)):
             ticks_assigned.append(ticks[tick_idx])
             labels_assigned.append(labels[label_idx])
-            
+
     # Fix outlier too close
     if len(ticks_assigned) <= 3:
         error_value = np.min(cost_matrix)
@@ -58,13 +73,11 @@ def assign(ticks, labels, tol=2, mode="x"):
 
         ticks_assigned_fixed, labels_assigned_fixed = [], []
         for tick_idx, label_idx in zip(row_ind, col_ind):
-            #         print(cost_matrix[tick_idx, label_idx])
             if cost_matrix[tick_idx, label_idx] < max(tol * 5, tol * np.min(cost_matrix)):
                 ticks_assigned_fixed.append(ticks[tick_idx])
                 labels_assigned_fixed.append(labels[label_idx])
-                
+
         if len(ticks_assigned) < len(ticks_assigned_fixed):
-#             print('Fixed ticks', mode)
             ticks_assigned = ticks_assigned_fixed
             labels_assigned = labels_assigned_fixed
 
@@ -72,19 +85,25 @@ def assign(ticks, labels, tol=2, mode="x"):
 
 
 def restrict_on_line(preds, margin=5, cat=False):
+    """
+    Restrict the predicted ticks on the x-axis and y-axis to be aligned along a line.
+
+    Args:
+        preds (list): List of predicted elements containing chart, x-axis ticks, y-axis ticks, and points.
+        margin (int): Margin value for considering ticks as aligned along a line.
+        cat (bool): Flag indicating whether to concatenate x-axis and y-axis labels and ticks.
+
+    Returns:
+        list: List of restricted predicted elements.
+    """
     try:
         graph = preds[0][0]
         x_axis, y_axis = graph[0], graph[3]
     except Exception:
         x_axis, y_axis = 0, 0
-   
 
     ticks = preds[2]
     ticks_x, ticks_y = (ticks[:, 0] + ticks[:, 2]) / 2, (ticks[:, 1] + ticks[:, 3]) / 2
-
-    #     print(x_axis, y_axis)
-    #     print(ticks_x)
-    #     print(ticks_y)
 
     dists_x = ticks_x - x_axis
     dists_y = ticks_y - y_axis
@@ -92,13 +111,8 @@ def restrict_on_line(preds, margin=5, cat=False):
     best_x = dists_x[np.argmax([(np.abs(dists_x - d) < margin).sum() for d in dists_x])]
     best_y = dists_y[np.argmax([(np.abs(dists_y - d) < margin).sum() for d in dists_y])]
 
-    #     print(dists_x - best_x)
-    #     print(dists_y - best_y)
     y_ticks = ticks[np.abs(dists_x - best_x) < margin]  # similar x
     x_ticks = ticks[np.abs(dists_y - best_y) < margin]  # similar y
-
-#     print(x_ticks)
-#     print(y_ticks)
 
     # Pair with labels
     labels = preds[1]

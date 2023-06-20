@@ -1,14 +1,15 @@
-import json
 import torch
+import json
 import numpy as np
-import pandas as pd
+from tqdm import tqdm
+from torch.utils.data import DataLoader
 
+from params import NUM_WORKERS
 from data.dataset import ClsDataset
 from data.transforms import get_transfos
 from model_zoo.models import define_model
 from util.torch import load_model_weights
 from util.metrics import accuracy
-from inference.predict import predict
 
 
 class Config:
@@ -19,6 +20,52 @@ class Config:
     def __init__(self, dic):
         for k, v in dic.items():
             setattr(self, k, v)
+
+
+def predict(model, dataset, loss_config, batch_size=64, device="cuda", use_fp16=False):
+    """
+    Perform model inference on a dataset.
+
+    Args:
+        model (nn.Module): Trained model for inference.
+        dataset (Dataset): Dataset to perform inference on.
+        loss_config (dict): Loss configuration.
+        batch_size (int, optional): Batch size for inference. Defaults to 64.
+        device (str, optional): Device to use for inference. Defaults to "cuda".
+        use_fp16 (bool, optional): Whether to use mixed precision inference. Defaults to False.
+
+    Returns:
+        preds (numpy.ndarray): Predicted probabilities of shape (num_samples, num_classes).
+        preds_aux (numpy.ndarray): Auxiliary predictions of shape (num_samples, num_aux_classes).
+    """
+    model.eval()
+    preds = np.empty((0, model.num_classes))
+    preds_aux = []
+
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS
+    )
+
+    with torch.no_grad():
+        for img, _, _ in tqdm(loader):
+            with torch.cuda.amp.autocast(enabled=use_fp16):
+                pred, pred_aux = model(img.cuda())
+
+            # Get probabilities
+            if loss_config["activation"] == "sigmoid":
+                pred = pred.sigmoid()
+            elif loss_config["activation"] == "softmax":
+                pred = pred.softmax(-1)
+
+            if loss_config.get("activation_aux", "softmax") == "sigmoid":
+                pred_aux = pred_aux.sigmoid()
+            elif loss_config.get("activation_aux", "softmax") == "softmax":
+                pred_aux = pred_aux.softmax(-1)
+
+            preds = np.concatenate([preds, pred.cpu().numpy()])
+            preds_aux.append(pred_aux.cpu().numpy())
+
+    return preds, np.concatenate(preds_aux)
 
 
 def kfold_inference(
@@ -35,13 +82,8 @@ def kfold_inference(
         df (pd.DataFrame): DataFrame containing the data.
         exp_folder (str): Path to the experiment folder.
         debug (bool, optional): Whether to run in debug mode. Defaults to False.
-        save (bool, optional): Whether to save the predictions. Defaults to True.
         use_tta (bool, optional): Whether to use test time augmentation. Defaults to False.
         use_fp16 (bool, optional): Whether to use mixed precision inference. Defaults to False.
-        train (bool, optional): Whether to perform inference on the training set. Defaults to False.
-        use_mt (bool, optional): Whether to use model teacher. Defaults to False.
-        distilled (bool, optional): Whether to use distilled model. Defaults to False.
-        n_soup (int, optional): Number of models to use for model soup. Defaults to 0.
 
     Returns:
         np.ndarray: Array containing the predicted probabilities for each class.
@@ -88,7 +130,7 @@ def kfold_inference(
         if "target" in df.columns:
             acc = accuracy(df["target"].values, pred)
             print(f"\n -> Accuracy : {acc:.4f}")
-        
+
         preds.append(pred)
 
     return np.mean(preds, 0)

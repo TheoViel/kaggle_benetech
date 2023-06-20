@@ -1,12 +1,8 @@
-import gc
-import sys
 import cv2
 import torch
 import numpy as np
-import torch.nn as nn
 import albumentations as albu
 
-from tqdm import tqdm
 from albumentations import pytorch as AT
 from torch.utils.data import Dataset
 
@@ -15,17 +11,19 @@ from util.boxes import Boxes
 
 class InferenceDataset(Dataset):
     """
-    Detection dataset for inference.
+    Dataset for inference in a detection task.
 
     Attributes:
         df (DataFrame): The DataFrame containing the dataset information.
         paths (numpy.ndarray): The paths to the images in the dataset.
         transforms: Augmentations to apply to the images.
+        pad (bool): Whether to apply padding to the images.
+        pad_advanced (bool): Whether to apply advanced padding to the images.
         gts (list): Ground truth boxes for each image.
-        classes (list): Ground truth classes  for each image.
+        classes (list): Ground truth classes for each image.
 
     Methods:
-        __init__(self, df, transforms=None): Constructor
+        __init__(self, df, transforms=None, pad=False, pad_advanced=False): Constructor
         __len__(self): Returns the length of the dataset.
         __getitem__(self, idx): Returns the item at the specified index.
     """
@@ -37,18 +35,20 @@ class InferenceDataset(Dataset):
         Args:
             df (DataFrame): The DataFrame containing the dataset information.
             transforms (albu transforms, optional): Augmentations. Defaults to None.
+            pad (bool, optional): Whether to apply padding to the images. Defaults to False.
+            pad_advanced (bool, optional): Whether to apply advanced padding to the images. Defaults to False.
         """
         self.df = df
-        self.paths = df['path'].values
+        self.paths = df["path"].values
         self.transforms = transforms
         self.pad = pad
         self.pad_advanced = pad_advanced
-        
+
         self.gts, self.classes = [], []
         for i in range(len(df)):
             try:
-                with open(df['gt_path'][i], 'r') as f:
-                    bboxes = np.array([l[:-1].split() for l in f.readlines()]).astype(float)
+                with open(df["gt_path"][i], "r") as f:
+                    bboxes = np.array([line[:-1].split() for line in f.readlines()]).astype(float)
                     labels, bboxes = bboxes[:, 0], bboxes[:, 1:]
                     self.gts.append(bboxes)
                     self.classes.append(labels)
@@ -81,21 +81,18 @@ class InferenceDataset(Dataset):
             if image.shape[1] > image.shape[0] * 1.4:
                 padding = 255 * np.ones(
                     (int(image.shape[1] * 0.9) - image.shape[0], image.shape[1], image.shape[2]),
-                    dtype=image.dtype
+                    dtype=image.dtype,
                 )
                 image = np.concatenate([image, padding], 0)
-                
+
             if self.pad_advanced:
                 if image.shape[1] < image.shape[0] * 0.9:
-#                     print(image.shape)
                     padding = 255 * np.ones(
                         (image.shape[0], int(image.shape[0] * 1) - image.shape[1], image.shape[2]),
-                        dtype=image.dtype
+                        dtype=image.dtype,
                     )
                     image = np.concatenate([image, padding], 1)
-#                     print(image.shape)
-#                 print(image.shape)
-    
+
         shape = image.shape
 
         if self.transforms is not None:
@@ -152,6 +149,7 @@ class DetectionMeter:
         truths (list): List of ground truth bounding boxes (Boxes instances)
         metrics (dict): Dictionary storing evaluation metrics (tp, fp, fn, precision, recall, f1_score)
     """
+
     def __init__(self, pred_format="coco", truth_format="yolo"):
         """
         Constructor
@@ -178,11 +176,13 @@ class DetectionMeter:
         """
         n, c, h, w = shape  # TODO : verif h & w
 
-        self.truths += [Boxes(box, (h, w), bbox_format=self.truth_format) for box in y_batch]
+        self.truths += [
+            Boxes(box, (h, w), bbox_format=self.truth_format) for box in y_batch
+        ]
 
         for pred in preds:
             pred = pred.cpu().numpy()
-            
+
             if pred.shape[1] >= 5:
                 label = pred[:, 5].astype(int)
                 self.labels.append(label)
@@ -228,6 +228,17 @@ def collate_fn_val_yolo(batch):
 
 
 def nms(bounding_boxes, confidence_score, threshold=0.5):
+    """
+    Applies non-maximum suppression (NMS) to eliminate overlapping bounding boxes.
+
+    Args:
+        bounding_boxes (list): List of bounding boxes in the format [x_min, y_min, x_max, y_max].
+        confidence_score (list): List of confidence scores corresponding to each bounding box.
+        threshold (float, optional): Intersection-over-Union (IoU) threshold. Defaults to 0.5.
+
+    Returns:
+        tuple: A tuple containing the picked bounding boxes and their corresponding scores.
+    """
     # If no bounding boxes, return empty list
     if len(bounding_boxes) == 0:
         return [], []
@@ -235,7 +246,7 @@ def nms(bounding_boxes, confidence_score, threshold=0.5):
     # Bounding boxes
     boxes = np.array(bounding_boxes)
 
-    # coordinates of bounding boxes
+    # Coordinates of bounding boxes
     start_x = boxes[:, 0]
     start_y = boxes[:, 1]
     end_x = boxes[:, 2]
@@ -256,14 +267,14 @@ def nms(bounding_boxes, confidence_score, threshold=0.5):
 
     # Iterate bounding boxes
     while order.size > 0:
-        # The index of largest confidence score
+        # The index of the bounding box with the largest confidence score
         index = order[-1]
 
-        # Pick the bounding box with largest confidence score
+        # Pick the bounding box with the largest confidence score
         picked_boxes.append(bounding_boxes[index])
         picked_score.append(confidence_score[index])
 
-        # Compute ordinates of intersection-over-union(IOU)
+        # Compute coordinates of intersection-over-union (IoU)
         x1 = np.maximum(start_x[index], start_x[order[:-1]])
         x2 = np.minimum(end_x[index], end_x[order[:-1]])
         y1 = np.maximum(start_y[index], start_y[order[:-1]])

@@ -1,10 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
-from collections import Counter
 
 
 def cluster_on_x(dots, w, plot=False):
+    """
+    Clusters the given dots based on their x-coordinates.
+
+    Args:
+        dots (np.ndarray): An array of shape (N, 4) containing the bounding box coordinates of the dots.
+        w (float): The width of the image.
+        plot (bool, optional): Whether to plot the clusters. Defaults to False.
+
+    Returns:
+        np.ndarray: X-coordinates of the cluster centers and
+        Dict[int, int] Dictionary mapping cluster labels to the count of dots in each cluster.
+    """
     xs = (dots[:, 0] + dots[:, 2]) / 2
     ys = (dots[:, 1] + dots[:, 3]) / 2
 
@@ -13,48 +24,49 @@ def cluster_on_x(dots, w, plot=False):
     labels = dbscan.labels_
 
     centers = []
-#     plot = True
-    for l in np.unique(labels):
-        centers.append(xs[labels == l].mean())
+
+    for lab in np.unique(labels):
+        centers.append(xs[labels == lab].mean())
 
         if plot:
             plt.scatter(
-                xs[labels == l],
-                -ys[labels == l],
-                label=f"Cluster {l}",
+                xs[labels == lab],
+                -ys[labels == lab],
+                label=f"Cluster {lab}",
             )
     if plot:
         plt.legend()
         plt.show()
-        
+
     labels = np.array(labels)
     centers = np.array(centers)
-#     print(labels)
-#     print(centers)
     clusters_y = [np.sort(ys[labels == i])[::-1] for i in np.unique(labels)]
 
     first = np.median([c[0] for c in clusters_y])
     second = np.median([c[1] for c in clusters_y if len(c) > 1])
     third = np.median([c[2] for c in clusters_y if len(c) > 2])
-    
+
     if len([c[1] for c in clusters_y if len(c) > 2]) > 2:
         delta = (first - third) / 2
     else:
         delta = (first - second)
-    
-#     print(delta)
-#     print([first - c.min() for c in clusters_y])
-    
+
     counts = [np.round((first - c.min()) / (delta) + 1) for c in clusters_y]
-    
     clusters = dict(zip(np.unique(labels), counts))
-#     print(clusters)
-#     print(Counter(labels))
 
     return centers, clusters  # Counter(labels)
 
 
 def my_assignment(mat):
+    """
+    Performs assignment of rows and columns based on the minimum values in the given matrix.
+
+    Args:
+        mat (np.ndarray): The input matrix.
+
+    Returns:
+        List[int], List[int]: Lists of row indices and column indices representing the assignment.
+    """
     row_ind, col_ind = [], []
     for i in range(np.min(mat.shape)):
         row, col = np.unravel_index(np.argmin(mat), mat.shape)
@@ -69,6 +81,20 @@ def my_assignment(mat):
 
 
 def assign_dots(labels, centers, tol=10, retrieve_missing=False, verbose=0):
+    """
+    Assigns dots to labels based on their proximity to the centers.
+
+    Args:
+        labels (np.ndarray): An array of label coordinates.
+        centers (np.ndarray): An array of center coordinates.
+        tol (int): Tolerance value for assigning dots to labels. Defaults to 10.
+        retrieve_missing (bool): Flag indicating whether to retrieve missing dots. Defaults to False.
+        verbose (int): Verbosity level. Defaults to 0.
+
+    Returns:
+        Tuple[Dict[int, int], np.ndarray]: A tuple containing a dictionary mapping dot indices to label
+                                           indices and an array of retrieved dots.
+    """
     labels_x = (labels[:, 0] + labels[:, 2]) / 2
     cost_matrix = np.abs(labels_x[:, None] - centers[None])
 
@@ -79,14 +105,9 @@ def assign_dots(labels, centers, tol=10, retrieve_missing=False, verbose=0):
     if not retrieve_missing:
         return mapping, []
 
-    # Unassigned labels
-    # mapping.update({k: -1 for k in len(labels) if k not in mapping.keys()})
-
     # Unassigned dots
     unassigned = [k for k in range(len(centers)) if k not in mapping.values()]
     centers_unassigned = centers[unassigned]
-
-    #     print(centers_unassigned)
 
     if not len(unassigned):
         return mapping, []
@@ -108,13 +129,9 @@ def assign_dots(labels, centers, tol=10, retrieve_missing=False, verbose=0):
     )
     xc = centers_unassigned[:, None]
 
-    #     print(xc.shape, yc.shape)
-
     retrieved = np.concatenate(
         [xc - w // 2, yc - h // 2, xc + w // 2, yc + h // 2], 1
     ).astype(int)
-
-    #     print(retrieved)
 
     mapping.update({len(labels) + i: k for i, k in enumerate(unassigned)})
 
@@ -122,6 +139,16 @@ def assign_dots(labels, centers, tol=10, retrieve_missing=False, verbose=0):
 
 
 def restrict_labels_x(preds, margin=5):
+    """
+    Restricts the labels in the x-axis based on their proximity to a reference point on the graph.
+
+    Args:
+        preds (List): A list of predictions containing the graph, labels, and other information.
+        margin (int): The margin value used to determine proximity. Defaults to 5.
+
+    Returns:
+        List: A modified list of predictions with restricted labels in the x-axis.
+    """
     try:
         graph = preds[0][0]
         x_axis, y_axis = graph[0], graph[3]
@@ -150,6 +177,18 @@ def restrict_labels_x(preds, margin=5):
 
 
 def constraint_size(dots, coef=0, margin=1):
+    """
+    Applies constraints on the size (width and height)
+    of the dots based on their median values and coefficients.
+
+    Args:
+        dots (ndarray): An array of dots represented by their bounding boxes.
+        coef (float): The coefficient used to determine the size constraint. Defaults to 0.
+        margin (int): The margin value added to the size constraint. Defaults to 1.
+
+    Returns:
+        ndarray: An array of dots after applying the size constraints.
+    """
     ws = dots[:, 2] - dots[:, 0]
     hs = dots[:, 3] - dots[:, 1]
 

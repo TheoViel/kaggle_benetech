@@ -9,8 +9,7 @@ from data.preparation import (
     prepare_data,
     prepare_gen_data,
     prepare_dots,
-    prepare_xqa_data,
-    limit_training_samples
+    # limit_training_samples
 )
 from params import DATA_PATH, CLASSES
 from util.torch import init_distributed
@@ -182,31 +181,24 @@ if __name__ == "__main__":
 #     df = limit_training_samples(df, {'vertical_bar': 5000, 'scatter': 10000, 'line': 5000})
 
     df_dot = prepare_dots(DATA_PATH, oversample=100, oversample_val=100 if config.fullfit else 1)  # val dots
-#     df_xqa = prepare_xqa_data(DATA_PATH)  # xQA
+
     df_gen = prepare_gen_data(DATA_PATH, img_folder="generated/bars_v2/")
     df_gen_a = prepare_gen_data(DATA_PATH, img_folder="gen_andrija/")
-    
-#     df_gen_b = prepare_gen_data(DATA_PATH, img_folder="bartley/500k_graphs/")
-#     df_gen_b = limit_training_samples(df_gen_b, {'*': 1})
-    
+
     if config.local_rank == 0:
         print()
         print('Original data :',  df['chart-type'].value_counts().to_dict())
         print('Dot data :',  df_dot['chart-type'].value_counts().to_dict())
-#         print('xQA data :',  df_xqa['chart-type'].value_counts().to_dict())
         print('Excel data :',  df_gen['chart-type'].value_counts().to_dict())
         print('Matplotlib data :', df_gen_a['chart-type'].value_counts().to_dict())
-#         print('Kaggle public data :', df_gen_b['chart-type'].value_counts().to_dict())
 
     df = pd.concat([
         df,
         df_dot,
-#         df_xqa,
         df_gen,
         df_gen_a,
-#         df_gen_b
     ], ignore_index=True)
-    
+
     if config.local_rank == 0:
         print()
         print('Train data :',  df[df['split'] == "train"]['chart-type'].value_counts().to_dict())

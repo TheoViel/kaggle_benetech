@@ -1,8 +1,6 @@
-import sys
 import timm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from model_zoo.gem import GeM
 from util.torch import load_model_weights
@@ -20,24 +18,25 @@ def define_model(
     drop_path_rate=0,
     use_gem=False,
     verbose=1,
-    replace_pad_conv=False,
 ):
     """
-    Loads a pretrained model & builds the architecture.
-    Supports timm models.
-    TODO
+    Define a classification model.
 
     Args:
-        name (str): Model name
-        num_classes (int, optional): Number of classes. Defaults to 1.
-        num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-        n_channels (int, optional): Number of image channels. Defaults to 3.
-        pretrained_weights (str, optional): Path to pretrained encoder weights. Defaults to ''.
-        pretrained (bool, optional): Whether to load timm pretrained weights.
-        reduce_stride (bool, optional): Whether to reduce first layer stride. Defaults to False.
+        name (str): Name of the model architecture.
+        num_classes (int): Number of main output classes. Defaults to 1.
+        num_classes_aux (int): Number of auxiliary output classes. Defaults to 0.
+        n_channels (int): Number of input channels. Defaults to 3.
+        pretrained_weights (str): Path to the pretrained weights. Defaults to "".
+        pretrained (bool): Whether to use pretrained weights. Defaults to True.
+        reduce_stride (bool): Whether to reduce the stride of the model. Defaults to False.
+        drop_rate (float): Dropout rate. Defaults to 0.
+        drop_path_rate (float): Drop path rate for stochastic depth. Defaults to 0.
+        use_gem (bool): Whether to use GeM pooling. Defaults to False.
+        verbose (int): Verbosity level. Defaults to 1.
 
     Returns:
-        torch model -- Pretrained model.
+        ClsModel: Defined classification model.
     """
     # Load pretrained model
     if drop_path_rate > 0:
@@ -73,18 +72,33 @@ def define_model(
 
     if reduce_stride:
         model.reduce_stride()
-        
-    if replace_pad_conv and "efficient" in name:
-        if verbose:
-            print('Replacing Conv2dSame layers\n')
-        model = replace_conv2d_same(model, verbose=0)
 
     return model
 
 
 class ClsModel(nn.Module):
     """
-    Model with an attention mechanism.
+    Classification model based on a backbone encoder.
+
+    Methods:
+        __init__(encoder, num_classes, num_classes_aux, n_channels, drop_rate, use_gem): Constructor
+        _update_num_channels(): Update the number of input channels for the encoder
+        reduce_stride(): Reduce the stride of the stem convolutional layer
+        extract_features(x): Extract features from the input batch
+        get_logits(fts): Compute logits from the extracted features
+        forward(x, return_fts): Forward pass of the model
+
+    Attributes:
+        encoder (nn.Module): Backbone encoder model
+        nb_ft (int): Number of features in the encoder
+        num_classes (int): Number of classes for the main classification task
+        num_classes_aux (int): Number of classes for an auxiliary classification task
+        n_channels (int): Number of input channels
+        use_gem (bool): Whether to use GeM pooling
+        global_pool (GeM): Global pooling layer
+        dropout (nn.Dropout or nn.Identity): Dropout layer
+        logits (nn.Linear): Linear layer for main classification task
+        logits_aux (nn.Linear): Linear layer for auxiliary classification task
     """
 
     def __init__(
@@ -98,13 +112,14 @@ class ClsModel(nn.Module):
     ):
         """
         Constructor.
-        TODO
 
         Args:
-            encoder (timm model): Encoder.
-            num_classes (int, optional): Number of classes. Defaults to 1.
-            num_classes_aux (int, optional): Number of aux classes. Defaults to 0.
-            n_channels (int, optional): Number of image channels. Defaults to 3.
+            encoder (nn.Module): Backbone encoder model.
+            num_classes (int, optional): Number of classes for the main cls task. Defaults to 1.
+            num_classes_aux (int, optional): Number of classes for an auxiliary cls task. Defaults to 0.
+            n_channels (int, optional): Number of input channels. Defaults to 3.
+            drop_rate (float, optional): Dropout rate. If 0, no dropout is applied. Defaults to 0.
+            use_gem (bool, optional): Whether to use GeM pooling. Defaults to False.
         """
         super().__init__()
 
@@ -126,6 +141,9 @@ class ClsModel(nn.Module):
         self._update_num_channels()
 
     def _update_num_channels(self):
+        """
+        Update the number of input channels for the encoder if it differs from 3.
+        """
         if self.n_channels != 3:
             for n, m in self.encoder.named_modules():
                 if n:
@@ -143,6 +161,9 @@ class ClsModel(nn.Module):
                     break
 
     def reduce_stride(self):
+        """
+        Reduce the stride of the stem convolutional layer if the encoder is an EfficientNet or an NFNet.
+        """
         if "efficient" in self.encoder.name:
             self.encoder.conv_stem.stride = (1, 1)
         elif "nfnet" in self.encoder.name:
@@ -152,13 +173,14 @@ class ClsModel(nn.Module):
 
     def extract_features(self, x):
         """
-        Extract features function.
+        Compute logits from the extracted features.
 
         Args:
-            x (torch tensor [batch_size x 3 x w x h]): Input batch.
+            fts (torch.Tensor): Features tensor of shape (batch_size, num_features).
 
         Returns:
-            torch tensor [batch_size x num_features]: Features.
+            torch.Tensor: Main logits tensor of shape (batch_size, num_classes).
+            torch.Tensor: Auxiliary logits tensor of shape (batch_size, num_classes_aux).
         """
         fts = self.encoder(x)
 
@@ -192,18 +214,17 @@ class ClsModel(nn.Module):
 
     def forward(self, x, return_fts=False):
         """
-        Forward function.
+        Forward pass of the model.
 
         Args:
-            x (torch tensor [batch_size x n_frames x h x w]): Input batch.
+            x (torch.Tensor): Input batch tensor of shape (batch_size, n_frames, h, w).
+            return_fts (bool): Whether to return the extracted features.
 
         Returns:
-            torch tensor [batch_size x num_classes]: logits.
-            torch tensor [batch_size x num_classes_aux]: logits aux.
+            torch.Tensor: Main logits tensor of shape (batch_size, num_classes).
+            torch.Tensor: Auxiliary logits tensor of shape (batch_size, num_classes_aux).
+            torch.Tensor: Extracted features tensor of shape (batch_size, num_features) if return_fts is True.
         """
-#         if "nyu" in self.encoder.name:
-#             x = x.mean(1, keepdims=True)
-
         fts = self.extract_features(x)
 
         fts = self.dropout(fts)

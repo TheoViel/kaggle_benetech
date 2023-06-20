@@ -3,8 +3,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 cd src
 
-torchrun --nproc_per_node=8 main.py  # --epochs 1
+torchrun --nproc_per_node=8 main.py  --lr 3e-5
 
-# echo 
+echo 
 
-# torchrun --nproc_per_node=8 main.py --epochs 2
+torchrun --nproc_per_node=8 main.py  --lr 5e-5

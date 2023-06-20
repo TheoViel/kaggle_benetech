@@ -9,25 +9,26 @@ from torch.utils.data import DataLoader
 
 sys.path.append("../yolox")
 sys.path.append("yolox")
-from yolox.utils import postprocess
-from inference.utils import DetectionMeter, collate_fn_val_yolo
+from yolox.utils import postprocess  # noqa
+from inference.utils import DetectionMeter, collate_fn_val_yolo  # noqa
 
 
 def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
     """
-    Predict function.
+    Performs prediction on a dataset using a model.
 
     Args:
-        model (torch model): Model wrapper.
-        dataset (InferenceDataset): Dataset.
-        config (Config): Config.
+        model (nn.Module): The model to use for prediction.
+        dataset (Dataset): The dataset to perform prediction on.
+        config: Configuration object or dictionary.
+        disable_tqdm (bool, optional): Whether to disable the tqdm progress bar. Defaults to True.
+        extract_fts (bool, optional): Whether to extract features from the model. Defaults to False.
 
     Returns:
-        DetectionMeter: Meter containing predictions.
-        TODO
+        tuple: A tuple containing the evaluation meter and the extracted features (if extract_fts=True).
     """
     model.eval()
-    
+
     loader = DataLoader(
         dataset,
         batch_size=config.val_bs,
@@ -47,9 +48,9 @@ def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
 
             try:
                 pred_boxes, fts = model(x)
-            except:
+            except Exception:
                 pred_boxes = model(x)
-                
+
             meter.update(batch[1], pred_boxes, x.size())
 
             if extract_fts:
@@ -57,10 +58,26 @@ def predict(model, dataset, config, disable_tqdm=True, extract_fts=False):
 
     gc.collect()
     torch.cuda.empty_cache()
-    return meter, fts_list
+
+    if extract_fts:
+        return meter, fts_list
+    else:
+        return meter
 
 
 def retrieve_yolox_model(exp_file, ckpt_file, size=(1024, 1024), verbose=1):
+    """
+    Retrieves and configures a YOLOX model for inference.
+
+    Args:
+        exp_file (str): The path to the experiment file.
+        ckpt_file (str): The path to the checkpoint file containing the model weights.
+        size (tuple, optional): The input size of the model. Defaults to (1024, 1024).
+        verbose (int, optional): Verbosity level. If 1, it prints the loading message. Defaults to 1.
+
+    Returns:
+        nn.Module: The configured YOLOX model for inference.
+    """
     sys.path.append(os.path.dirname(exp_file))
     current_exp = importlib.import_module(os.path.basename(exp_file).split(".")[0])
 
@@ -71,7 +88,7 @@ def retrieve_yolox_model(exp_file, ckpt_file, size=(1024, 1024), verbose=1):
     exp.nmsthre = 0.75
 
     model_roi_ = exp.get_model()
-    
+
     if verbose:
         print(" -> Loading weights from", ckpt_file)
 
@@ -132,22 +149,14 @@ class YoloXWrapper(nn.Module):
         Returns:
             torch tensor: Predictions.
         """
-#         print(x.size())
-#         imgs, files, shape0, shape1 = preprocess(
-#             ims, size=(1024, 1024), model_stride=model_roi.stride
-#         )  # Resize/Pad
-            
         pred_boxes, features = self.model(x * 255, return_fts=True)
 
         pred_boxes_ = None
         conf_thresh = self.conf_thresh
         while pred_boxes_ is None:
-#             print(conf_thresh)
             pred_boxes_ = postprocess(
                 pred_boxes.clone(), 1, conf_thresh, self.iou_thresh, class_agnostic=False,
             )[0]
-            
             conf_thresh = max(conf_thresh - 0.1, conf_thresh / 10)
-#             print(conf_thresh)
 
         return [pred_boxes_], [features]

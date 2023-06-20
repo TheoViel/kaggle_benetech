@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from sklearn.metrics import r2_score
 from scipy.optimize import linear_sum_assignment
@@ -120,16 +119,18 @@ def compute_metrics(preds, truths):
         dict: Metrics
     """
     ftp, ffp, ffn = [], [], []
-    
+
     if isinstance(preds, list):
         for pred, truth in zip(preds, truths):
-            tp, fp, fn = precision_calc(truth['pascal_voc'].copy(), pred['pascal_voc'].copy())
+            tp, fp, fn = precision_calc(
+                truth["pascal_voc"].copy(), pred["pascal_voc"].copy()
+            )
             ftp.append(tp)
             ffp.append(fp)
             ffn.append(fn)
-            
+
             assert ftp + ffn == len(truth)
-            
+
         tp = np.sum(ftp)
         fp = np.sum(ffp)
         fn = np.sum(ffn)
@@ -139,9 +140,11 @@ def compute_metrics(preds, truths):
         assert len(truths)
 
     precision = tp / (tp + fp) if tp + fp else 0
-    recall = tp / (tp + fn) # if tp + fn else 1
+    recall = tp / (tp + fn)  # if tp + fn else 1
 
-    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0.
+    f1_score = (
+        2 * (precision * recall) / (precision + recall) if (precision + recall) else 0.0
+    )
     return {
         "tp": tp,
         "fp": fp,
@@ -157,7 +160,7 @@ def sigmoid(x):
 
 
 def normalized_rmse(y_true, y_pred):
-    # The argument to the sigmoid transform is equal to 
+    # The argument to the sigmoid transform is equal to
     # rmse(y_true, y_pred) / rmse(y_true, np.mean(y_true))
     return sigmoid((1 - r2_score(y_true, y_pred)) ** 0.5)
 
@@ -180,20 +183,24 @@ def score_series(y_true, y_pred):
 def benetech_score(ground_truth: pd.DataFrame, predictions: pd.DataFrame) -> float:
     """
     Evaluate predictions using the metric from the Benetech - Making Graphs Accessible.
-    
+
     Parameters
     ----------
     ground_truth: pd.DataFrame
-        Has columns `[data_series, chart_type]` and an index `id`. Values in `data_series` 
+        Has columns `[data_series, chart_type]` and an index `id`. Values in `data_series`
         should be either arrays of floats or arrays of strings.
-    
+
     predictions: pd.DataFrame
     """
     if not ground_truth.index.equals(predictions.index):
-        raise ValueError("Must have exactly one prediction for each ground-truth instance.")
+        raise ValueError(
+            "Must have exactly one prediction for each ground-truth instance."
+        )
     if not ground_truth.columns.equals(predictions.columns):
         raise ValueError(f"Predictions must have columns: {ground_truth.columns}.")
-    pairs = zip(ground_truth.itertuples(index=False), predictions.itertuples(index=False))
+    pairs = zip(
+        ground_truth.itertuples(index=False), predictions.itertuples(index=False)
+    )
     scores = []
     for (gt_series, gt_type), (pred_series, pred_type) in pairs:
         if gt_type != pred_type:  # Check chart_type condition

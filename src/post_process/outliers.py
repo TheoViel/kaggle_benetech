@@ -3,6 +3,19 @@ from scipy.stats import spearmanr, pearsonr
 
 
 def find_outliers(x_train, values, verbose=0, corr="spearman", th=0.99):
+    """
+    Finds outliers in a dataset based on their correlation with a target variable.
+
+    Args:
+        x_train (list or numpy.array): Training data features.
+        values (list or numpy.array): Target variable values.
+        verbose (int): Verbosity level. Set to 1 to print removal information. Defaults to 0.
+        corr (str): Correlation type. Defaults to "spearman".
+        th (float): Threshold for outlier correlation. Defaults to 0.99.
+
+    Returns:
+        list: List of indices corresponding to the outliers found.
+    """
     corr_fct = spearmanr if corr == "spearman" else pearsonr
 
     corr_start = np.abs(corr_fct(x_train, values).statistic)
@@ -38,6 +51,15 @@ def find_outliers(x_train, values, verbose=0, corr="spearman", th=0.99):
 
 
 def longest_increasing_subset(lst):
+    """
+    Finds the longest increasing subsequence in a given list.
+
+    Args:
+        lst (list): Input list.
+
+    Returns:
+        list: Longest increasing subsequence.
+    """
     n = len(lst)
     if n == 0:
         return []
@@ -66,6 +88,16 @@ def longest_increasing_subset(lst):
 
 
 def find_outliers_order(values, verbose=0):
+    """
+    Finds outliers in a list of values based on their order.
+
+    Args:
+        values (list or numpy.ndarray): Input list of values.
+        verbose (int, optional): Verbosity level (0: no output, 1: output outliers). Defaults to 0.
+
+    Returns:
+        list: List of outlier indices.
+    """
     ref = np.arange(len(values))
     sort = np.argsort(values)
 

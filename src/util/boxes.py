@@ -27,8 +27,8 @@ def pascal_to_yolo(boxes, h=None, w=None):
     boxes[:, 1], boxes[:, 3] = (boxes[:, 1] + boxes[:, 3]) / 2, boxes[:, 3] - boxes[:, 1]
 
     return boxes
-    
-    
+
+
 def pascal_to_albu(boxes, h, w):
     """
     x0, y0, x1, y1 -> x0, y0, x1, y1 normalized in [0, 1].
@@ -209,12 +209,7 @@ class Boxes:
         self.h = h
         self.w = w
 
-        if bbox_format == "volume":
-            self.boxes_yolo = volumes_to_yolo(data, h, w)
-            self.boxes_pascal = yolo_to_pascal(self.boxes_yolo.copy(), h, w)
-            self.boxes_albu = pascal_to_albu(self.boxes_pascal.copy(), h, w)
-            self.boxes_coco = pascal_to_coco(self.boxes_pascal.copy())
-        elif bbox_format == "yolo":
+        if bbox_format == "yolo":
             self.boxes_yolo = data
             self.boxes_pascal = yolo_to_pascal(self.boxes_yolo.copy(), h, w)
             self.boxes_albu = pascal_to_albu(self.boxes_pascal.copy(), h, w)
@@ -254,31 +249,16 @@ class Boxes:
 
     def update_shape(self, shape):
         self.__init__(self.boxes_yolo, shape, bbox_format="yolo")
-        
+
     def filter_(self, to_keep):
         self.__init__(self.boxes_yolo[to_keep], self.shape, bbox_format="yolo")
-        
+
     def get_ratios(self):
         return self.boxes_yolo[:, 3].astype(float) / self.boxes_yolo[:, 2].astype(float)
-    
+
     def is_side(self, tol=5):
-        is_bottom =  np.abs(self.boxes_pascal[:, 3] - self.h) < tol
-        is_top =  np.abs(self.boxes_pascal[:, 2]) < tol
-        is_left =  np.abs(self.boxes_pascal[:, 1] - self.w) < tol
-        is_right =  np.abs(self.boxes_pascal[:, 0]) < tol
+        is_bottom = np.abs(self.boxes_pascal[:, 3] - self.h) < tol
+        is_top = np.abs(self.boxes_pascal[:, 2]) < tol
+        is_left = np.abs(self.boxes_pascal[:, 1] - self.w) < tol
+        is_right = np.abs(self.boxes_pascal[:, 0]) < tol
         return is_bottom | is_top | is_left | is_right
-
-    def ious(self):
-        return batched_iou(self.boxes_pascal[:, None], self.boxes_pascal[None])
-
-
-def batched_iou(A, B):
-    low = np.s_[...,:2]
-    high = np.s_[...,2:]
-
-    A, B = A.copy(), B.copy()
-    A[high] += 1
-    B[high] += 1
-
-    intrs = (np.maximum(0, np.minimum(A[high], B[high]) - np.maximum(A[low], B[low]))).prod(-1)
-    return intrs / ((A[high] - A[low]).prod(-1) + (B[high] - B[low]).prod(-1) - intrs)

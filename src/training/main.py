@@ -78,13 +78,6 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
             broadcast_buffers=config.syncbn,
         )
 
-#     try:
-#         model = torch.compile(model, mode="reduce-overhead")
-#         if config.local_rank == 0:
-#             print("Using torch 2.0 acceleration !\n")
-#     except Exception:
-#         pass
-
     model.zero_grad(set_to_none=True)
     model.train()
 
@@ -93,7 +86,6 @@ def train(config, df_train, df_val, fold, log_folder=None, run=None):
         print(f"    -> {len(train_dataset)} training images")
         print(f"    -> {len(val_dataset)} validation images")
         print(f"    -> {n_parameters} trainable parameters\n")
-
 
     pred_val = fit(
         model,
@@ -141,15 +133,13 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
     Returns:
         np array [len(df) x num_classes]: Oof predictions.
     """
-    
+
     df_train = df[df['split'] == "train"].reset_index(drop=True)
     df_val = df[df['split'] != "train"].reset_index(drop=True)
     df_val = df_val.drop_duplicates(keep="first", subset="path").reset_index(drop=True)
 
     if config.local_rank == 0:
-        print(
-            f"\n-------------   Train / Val Split  -------------\n"
-        )
+        print("\n-------------   Train / Val Split  -------------\n")
 
     seed_everything(int(re.sub(r"\W", "", config.name), base=36) % 2**31)
 
@@ -177,7 +167,7 @@ def k_fold(config, df, df_extra=None, log_folder=None, run=None):
                     f"\n-------------   Fullfit {ff + 1} / {config.n_fullfit} -------------\n"
                 )
             seed_everything(config.seed + ff)
-            
+
             df_train_ff = pd.concat(
                 [df_train] + [df_val] * config.oversample_extracted,
                 ignore_index=True

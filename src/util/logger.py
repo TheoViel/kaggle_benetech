@@ -61,7 +61,8 @@ def create_logger(directory="", name="logs.txt"):
 def prepare_log_folder(log_path):
     """
     Creates the directory for logging.
-    Logs will be saved at log_path/date_of_day/exp_id
+    Logs will be saved at log_path/date_of_day/exp_id.
+
     Args:
         log_path (str): Directory
     Returns:

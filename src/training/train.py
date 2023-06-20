@@ -9,7 +9,7 @@ from training.losses import ClsLoss
 from training.mix import Mixup, Cutmix
 from training.optim import define_optimizer
 from util.metrics import accuracy
-from util.torch import sync_across_gpus, save_model_weights
+from util.torch import sync_across_gpus
 
 
 def evaluate(
@@ -168,7 +168,7 @@ def fit(
     )
 
     loss_fct = ClsLoss(loss_config)
-    
+
     if data_config["mix"] == "cutmix":
         mix = Cutmix(
             data_config["mix_alpha"],

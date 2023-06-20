@@ -167,20 +167,3 @@ def define_optimizer(model, name, lr=1e-3, weight_decay=0, betas=(0.9, 0.999)):
         raise NotImplementedError(name)
 
     return optimizer
-
-
-def update_teacher_params(student, teacher, alpha, global_step):
-    """
-    Updates the parameters of the teacher model,
-    using a combination of the true average and exponential average.
-
-    Args:
-        student (torch.nn.Module): The student model used for the exponential average.
-        teacher (torch.nn.Module): The teacher model updated using the combination of averages.
-        alpha (float): The weighting factor for the exponential average. Should be between 0 and 1.
-        global_step (int): The global step or iteration number of the training process.
-    """
-    # Use the true average until the exponential average is more correct
-    alpha = min(1 - 1 / (global_step + 1), alpha)
-    for ema_param, param in zip(teacher.parameters(), student.parameters()):
-        ema_param.data.mul_(alpha).add_(1 - alpha, param.data)

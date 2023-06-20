@@ -7,6 +7,16 @@ from util.torch import seed_everything
 
 
 def to_square(box):
+    """
+    Convert a bounding box into a square box by adjusting its width and height.
+
+    Args:
+        box (list): List of four coordinates representing the bounding box
+                    (x1, y1, x2, y2).
+
+    Returns:
+        numpy.ndarray: Array of four coordinates representing the square box.
+    """
     xc = (box[0] + box[2]) / 2
     yc = (box[1] + box[3]) / 2
 
@@ -33,6 +43,17 @@ def to_square(box):
 
 
 def point_nms(coords, scores, dist_th=8):
+    """
+    Perform non-maximum suppression on a set of points based on their coordinates and scores.
+
+    Args:
+        coords (numpy.ndarray): Array of point coordinates of shape (N, 2).
+        scores (numpy.ndarray): Array of point scores of shape (N,).
+        dist_th (float): Distance threshold for suppression.
+
+    Returns:
+        numpy.ndarray: Array of indices of the selected points after non-maximum suppression.
+    """
     if len(coords) == 0:
         return []
 
@@ -53,7 +74,6 @@ def point_nms(coords, scores, dist_th=8):
                 break
 
         if is_selected:
-            #             print(selected_indices, sorted_indices[i])
             selected_indices.append(sorted_indices[i])
 
     return np.array(selected_indices)
@@ -62,6 +82,22 @@ def point_nms(coords, scores, dist_th=8):
 def retrieve_missing_boxes(
     preds, img, min_sim=0.85, verbose=0, seed=None, hw=5, max_retrieved=20, margin=0
 ):
+    """
+    Retrieves missing bounding boxes based on a set of predicted points.
+
+    Args:
+        preds (list): List of predictions, where preds[-1] contains the predicted points.
+        img (ndarray): Input image.
+        min_sim (float, optional): Minimum similarity threshold for retrieving boxes. Defaults to 0.85.
+        verbose (int, optional): Verbosity level. Defaults to 0.
+        seed (int, optional): Random seed. Defaults to None.
+        hw (int, optional): Half-width of the retrieved boxes. Defaults to 5.
+        max_retrieved (int, optional): Maximum number of retrieved boxes per point. Defaults to 20.
+        margin (int, optional): Margin to apply to the retrieved boxes. Defaults to 0.
+
+    Returns:
+        ndarray: Array of retrieved bounding boxes.
+    """
     n_filters = 32
 
     pool_size = 5
@@ -98,22 +134,13 @@ def retrieve_missing_boxes(
 
             sim = ((img_embed - crop_embed) ** 2).sum(0).unsqueeze(0)
             sim = 1 / (1 + sim)
-            #         print(sim.size())
             sim = torch.where(sim > min_sim, sim, 0)
             sim = torch.where(sim == pool(sim), sim, 0)
 
-#             if verbose:
-#                 plt.figure(figsize=(15, 5))
-#                 plt.imshow(sim.cpu().numpy()[0])
-#                 plt.show()
-
             yc, xc = torch.where(sim[0] > 0)
             coords = torch.cat([xc.unsqueeze(-1), yc.unsqueeze(-1)], -1)
-            
-#             print(coords)
 
             if len(coords) - len(dots) < max_retrieved:
-                #                 print('!!')
                 candidates.append(coords.cpu().numpy())
 
     if not len(candidates):
@@ -133,8 +160,6 @@ def retrieve_missing_boxes(
 
     if verbose:
         plt.show()
-#         print(points)
-#         print(candidates)
 
     kept_ids = point_nms(np.concatenate([points, candidates], 0), scores)
     kept_ids = kept_ids[len(points):] - len(points)
@@ -143,9 +168,8 @@ def retrieve_missing_boxes(
     if hw is None:
         h = np.median([preds[-1][:5, 2] - preds[-1][:5, 0]])
         w = np.median([preds[-1][:5, 3] - preds[-1][:5, 1]])
-#         print(h, w)
         hw = int(np.mean([h, w]) / 2)
-        
+
     new_boxes = np.concatenate(
         [
             new_boxes[:, :1] - hw,

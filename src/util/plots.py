@@ -1,10 +1,11 @@
+import cv2
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 
 from PIL import Image
-from matplotlib.patches import Rectangle, Patch
+from matplotlib.patches import Rectangle  # , Patch
 from sklearn.metrics import confusion_matrix
 
 
@@ -121,7 +122,9 @@ def get_tick_value(name, data_series):
             return el["x"]
 
 
-def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, annot=None):
+def plot_annotated_image(
+    name="", width=1000, data_path="../input/", img=None, annot=None
+):
     """
     Plots an annotated image using the image file and annotation data located in the specified
     directory.
@@ -186,16 +189,19 @@ def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, a
         y1=-(annot["plot-bb"]["y0"] + annot["plot-bb"]["height"]) + img_height,
         line=dict(color="rgba(0, 0, 0, 0.1)"),
     )
-    
+
     # Visual elements
-#     for a in annot['visual-elements']:
-#         print(a, annot['visual-elements'][a])
-        
-    for bbox in annot['visual-elements']['bars']:
+    #     for a in annot['visual-elements']:
+    #         print(a, annot['visual-elements'][a])
+
+    for bbox in annot["visual-elements"]["bars"]:
         bbox["x1"] = bbox["x0"] + bbox["width"]
         bbox["y1"] = bbox["y0"] + bbox["height"]
         xs = [bbox["x0"], bbox["x0"], bbox["x1"], bbox["x1"], bbox["x0"]]
-        ys = - np.array([bbox["y0"], bbox["y1"], bbox["y1"], bbox["y0"], bbox["y0"]]) + img_height
+        ys = (
+            -np.array([bbox["y0"], bbox["y1"], bbox["y1"], bbox["y0"], bbox["y0"]])
+            + img_height
+        )
         fig.add_trace(
             go.Scatter(
                 x=xs,
@@ -207,17 +213,20 @@ def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, a
                 line=dict(color="rgba(0, 0, 0, 0.2)"),
             )
         )
-        
-    for k in ['dot points', 'scatter points', 'lines']:
-        for points in annot['visual-elements'][k]:
+
+    for k in ["dot points", "scatter points", "lines"]:
+        for points in annot["visual-elements"][k]:
             xs = np.round([dot["x"] for dot in points], 2)
             ys = np.round([-dot["y"] + img_height for dot in points], 2)
             fig.add_trace(
                 go.Scatter(
-                    x=xs, y=ys, mode="markers", name=k, marker=dict(color="black", opacity=0.5),
-                  )
+                    x=xs,
+                    y=ys,
+                    mode="markers",
+                    name=k,
+                    marker=dict(color="black", opacity=0.5),
+                )
             )
-
 
     # Add text polygons
     for text in annot["text"]:
@@ -248,14 +257,26 @@ def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, a
     xs = [dot["tick_pt"]["x"] for dot in annot["axes"]["x-axis"]["ticks"]]
     ys = [-dot["tick_pt"]["y"] + img_height for dot in annot["axes"]["x-axis"]["ticks"]]
     fig.add_trace(
-        go.Scatter(x=xs, y=ys, mode="markers", name="x-axis", marker=dict(color="darkorange", size=10))
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers",
+            name="x-axis",
+            marker=dict(color="darkorange", size=10),
+        )
     )
 
     # add y-axis dots
     xs = [dot["tick_pt"]["x"] for dot in annot["axes"]["y-axis"]["ticks"]]
     ys = [-dot["tick_pt"]["y"] + img_height for dot in annot["axes"]["y-axis"]["ticks"]]
     fig.add_trace(
-        go.Scatter(x=xs, y=ys, mode="markers", name="y-axis", marker=dict(color="orangered", size=10))
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers",
+            name="y-axis",
+            marker=dict(color="orangered", size=10),
+        )
     )
 
     # configure other layout
@@ -269,41 +290,48 @@ def plot_annotated_image(name="", width=1000, data_path="../input/", img=None, a
 
     # disable the autosize on double click because it adds unwanted margins around the image
     # and finally show figure
-    fig.show(config={"doubleClick": "reset"}, renderer='colab')
-    
-    print('Target :')
-    print(annot['data-series'])
+    fig.show(config={"doubleClick": "reset"}, renderer="colab")
+
+    print("Target :")
+    print(annot["data-series"])
 
 
 def plot_sample(img, boxes_list):
     """
     Plots an image with bounding boxes.
+    Coordinates are expected in format [x_center, y_center, width, height].
 
     Args:
         img (numpy.ndarray): The input image to be plotted.
         boxes_list (list): A list of lists containing the bounding box coordinates.
-            Each sublist represents the coordinates of a box in the format [x_center, y_center, width, height].
     """
     plt.figure(figsize=(12, 8))
     plt.imshow(img, cmap="gray")
     plt.axis(False)
-    
+
     colors = ["#1f77b4", "#d62728", "#17becf", "#ff7f0e", "#2ca02c", "#2ca02c"]
 
     for boxes, col in zip(boxes_list, colors):
         for box in boxes:
             h, w, _ = img.shape
             rect = Rectangle(
-                ((box[0] - box[2] / 2) * w, (box[1] - box[3] / 2) * h), box[2] * w, box[3] * h,
-                linewidth=2, facecolor='none', edgecolor=col
+                ((box[0] - box[2] / 2) * w, (box[1] - box[3] / 2) * h),
+                box[2] * w,
+                box[3] * h,
+                linewidth=2,
+                facecolor="none",
+                edgecolor=col,
             )
 
             plt.gca().add_patch(rect)
-            
+
+
 #             print(box)
 
 
-def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title="", save_file="", show=True):
+def plot_results(
+    img, preds, labels=None, gt=None, figsize=(15, 6), title="", save_file="", show=True
+):
     """
     Plots the results of object detection on an image.
 
@@ -317,47 +345,63 @@ def plot_results(img, preds, labels=None, gt=None, figsize=(15, 6), title="", sa
     """
     try:  # Boxes -> np array
         preds = preds["pascal_voc"]
-    except:
+    except Exception:
         pass
-    
+
     if isinstance(preds, list):  # list per class -> np array
         labels = [[i] * len(p) for i, p in enumerate(preds)]
-        labels = np.concatenate([l for l in labels if len(l)]).astype(int)
+        labels = np.concatenate([lab for lab in labels if len(lab)]).astype(int)
         preds = np.concatenate([p for p in preds if len(p)])
 
     plt.figure(figsize=figsize)
-    
+
     if isinstance(img, str):
         img = cv2.imread(img)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     plt.imshow(img, cmap="gray")
     plt.axis(False)
-    
-#     cs = ["#000000", "#1f77b4", "#d62728", "#17becf", "#ff7f0e", "#2ca02c", "#2ca02c"]
-    cs = [[0.0, 0.0, 0.0, 0.3], [0.12, 0.47, 0.71, 0.7], [0.84, 0.15, 0.16, 0.7], [0.09, 0.75, 0.81, 0.7], [1.0, 0.5, 0.05, 0.7], [0.17, 0.63, 0.17, 0.7], [0.17, 0.63, 0.17, 0.7]]
+
+    #     cs = ["#000000", "#1f77b4", "#d62728", "#17becf", "#ff7f0e", "#2ca02c", "#2ca02c"]
+    cs = [
+        [0.0, 0.0, 0.0, 0.3],
+        [0.12, 0.47, 0.71, 0.7],
+        [0.84, 0.15, 0.16, 0.7],
+        [0.09, 0.75, 0.81, 0.7],
+        [1.0, 0.5, 0.05, 0.7],
+        [0.17, 0.63, 0.17, 0.7],
+        [0.17, 0.63, 0.17, 0.7],
+    ]
 
     for i, box in enumerate(preds):
         if labels is not None:
             c = cs[labels[i]]
 
         rect = Rectangle(
-            (box[0], box[1]), box[2] - box[0], box[3] - box[1],
-            linewidth=2, facecolor='none', edgecolor=c
+            (box[0], box[1]),
+            box[2] - box[0],
+            box[3] - box[1],
+            linewidth=2,
+            facecolor="none",
+            edgecolor=c,
         )
         plt.gca().add_patch(rect)
 
     if gt is not None:
         for i, box in enumerate(gt["pascal_voc"]):
             rect = Rectangle(
-                (box[0], box[1]), box[2] - box[0], box[3] - box[1],
-                linewidth=1, facecolor='none', edgecolor=(1, 1, 1, 0.3)
+                (box[0], box[1]),
+                box[2] - box[0],
+                box[3] - box[1],
+                linewidth=1,
+                facecolor="none",
+                edgecolor=(1, 1, 1, 0.3),
             )
             plt.gca().add_patch(rect)
 
     plt.axis(True)
     plt.title(title)
-    
+
     if save_file:
         plt.tight_layout()
         plt.savefig(save_file)
